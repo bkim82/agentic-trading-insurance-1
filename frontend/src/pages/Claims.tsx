@@ -23,7 +23,7 @@ export function Claims() {
         )}
       </div>
 
-      <h2>{live.some((c) => c.status === 'open') ? 'In voting' : 'Recently resolved'}</h2>
+      <h2>{live.length > 0 && live.every((c) => c.status !== 'open') ? 'Recently resolved' : 'In voting'}</h2>
       {live.length === 0 ? (
         <p className="card muted empty">No claims are in voting.</p>
       ) : (

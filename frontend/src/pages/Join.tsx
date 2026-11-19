@@ -5,12 +5,16 @@ import { usePool } from '../state/PoolContext';
 import { date, duration, strategyHash, usd } from '../lib/format';
 import { JoinProgress } from '../components/JoinProgress';
 import { StrategyChips } from '../components/ClaimBits';
+import { useDemoMode } from '../state/DemoMode';
+import { DEMO_AGENT, DEMO_STRATEGY } from '../state/DemoPool';
 
 export function Join() {
   const pool = usePool();
-  const [agent, setAgent] = useState('');
-  const [strategy, setStrategy] = useState('');
-  const [amount, setAmount] = useState('');
+  const { demo } = useDemoMode();
+  // Demo mode prefills the form so a presenter can just press join.
+  const [agent, setAgent] = useState(demo ? DEMO_AGENT : '');
+  const [strategy, setStrategy] = useState(demo ? DEMO_STRATEGY : '');
+  const [amount, setAmount] = useState(demo ? '1' : '');
 
   if (pool.me) {
     return (

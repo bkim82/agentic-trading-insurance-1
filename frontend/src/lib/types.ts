@@ -40,3 +40,17 @@ export interface Claim {
   payout: number;
   ballots: Record<string, Ballot>;
 }
+
+/** One line of the activity feed, built from pool events. Amounts are USD. */
+export interface ActivityItem {
+  id: string;
+  kind: 'joined' | 'left' | 'filed' | 'voted' | 'resolved';
+  at: number;
+  actor?: string;
+  claimId?: number;
+  amount?: number;
+  vote?: VoteChoice;
+  status?: ClaimStatus;
+  tx?: string;
+}
+

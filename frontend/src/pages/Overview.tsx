@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { ClaimCard } from '../components/ClaimBits';
+import { ActivityFeed } from '../components/ActivityFeed';
 import { payoutFor, RULES } from '../lib/rules';
 import { duration, pct, timeLeft, usd } from '../lib/format';
 import { voteEligibility } from '../lib/voting';
@@ -55,7 +56,7 @@ export function Overview() {
       </div>
 
       <div className="section-head">
-        <h2>{needsVote.length > 0 ? 'Needs your vote' : open.length > 0 ? 'In voting' : 'Recently resolved'}</h2>
+        <h2>{needsVote.length > 0 ? 'Needs your vote' : open.length === 0 && recent.length > 0 ? 'Recently resolved' : 'In voting'}</h2>
         <Link to="/claims">All claims</Link>
       </div>
       {shown.length > 0 ? (
@@ -67,6 +68,9 @@ export function Overview() {
       ) : (
         <p className="card muted empty">No claims are in voting right now.</p>
       )}
+
+      <h2>Activity</h2>
+      <ActivityFeed />
 
       <h2>How it works</h2>
       <ol className="steps-row">

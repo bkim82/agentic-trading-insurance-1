@@ -24,45 +24,76 @@ const MISSING_KEY: ApiResult = {
 const hasKey = (env: CdpEnv): env is Required<CdpEnv> => !!env.CDP_API_KEY_ID && !!env.CDP_API_KEY_SECRET;
 const message = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback).slice(0, 300);
 
+/** Runs a read-only query against the CDP SQL API (base_sepolia.* tables). */
+async function runSql<T>(env: Required<CdpEnv>, sql: string): Promise<T[]> {
+  const { generateJwt } = await import('@coinbase/cdp-sdk/auth');
+  const host = 'api.cdp.coinbase.com';
+  const path = '/platform/v2/data/query/run';
+  const jwt = await generateJwt({
+    apiKeyId: env.CDP_API_KEY_ID,
+    apiKeySecret: env.CDP_API_KEY_SECRET,
+    requestMethod: 'POST',
+    requestHost: host,
+    requestPath: path,
+    expiresIn: 120,
+  });
+  const r = await fetch(`https://${host}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, cache: { maxAgeMs: 1000 } }),
+  });
+  const body = (await r.json()) as { result?: T[]; errorMessage?: string };
+  if (!r.ok || !body.result) throw new Error(body.errorMessage ?? `CDP SQL API returned ${r.status}`);
+  return body.result;
+}
+
+const POOL = POOL_ADDRESS.toLowerCase();
+
 /**
  * Every Joined event of the pool, via the CDP SQL API (base_sepolia.events). The public RPC
  * caps eth_getLogs at 200 blocks, which is too small to scan the pool's history from the browser.
  */
 export async function listMembers(env: CdpEnv): Promise<ApiResult> {
   if (!hasKey(env)) return MISSING_KEY;
-  const sql =
-    `SELECT block_number, parameters FROM base_sepolia.events ` +
-    `WHERE address = '${POOL_ADDRESS.toLowerCase()}' AND event_name = 'Joined' ORDER BY block_number ASC LIMIT 10000`;
   try {
-    const { generateJwt } = await import('@coinbase/cdp-sdk/auth');
-    const host = 'api.cdp.coinbase.com';
-    const path = '/platform/v2/data/query/run';
-    const jwt = await generateJwt({
-      apiKeyId: env.CDP_API_KEY_ID,
-      apiKeySecret: env.CDP_API_KEY_SECRET,
-      requestMethod: 'POST',
-      requestHost: host,
-      requestPath: path,
-      expiresIn: 120,
-    });
-    const r = await fetch(`https://${host}${path}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, cache: { maxAgeMs: 1000 } }),
-    });
-    const body = (await r.json()) as {
-      result?: { block_number: string; parameters: { member: string; agent: string; strategyURI: string } }[];
-      errorMessage?: string;
-    };
-    if (!r.ok || !body.result) throw new Error(body.errorMessage ?? `CDP SQL API returned ${r.status}`);
-    const joins = body.result.map((row) => ({
-      member: row.parameters.member,
-      agent: row.parameters.agent,
-      strategyURI: row.parameters.strategyURI,
-    }));
+    const rows = await runSql<{ parameters: { member: string; agent: string; strategyURI: string } }>(
+      env,
+      `SELECT block_number, parameters FROM base_sepolia.events ` +
+        `WHERE address = '${POOL}' AND event_name = 'Joined' ORDER BY block_number ASC LIMIT 10000`,
+    );
+    const joins = rows.map(({ parameters: p }) => ({ member: p.member, agent: p.agent, strategyURI: p.strategyURI }));
     return { status: 200, body: { joins } };
   } catch (e) {
     return { status: 502, body: { error: message(e, 'Member lookup failed') } };
+  }
+}
+
+/** The pool's 30 most recent events (joins, leaves, claims, votes, resolutions) for the activity feed. */
+export async function listActivity(env: CdpEnv): Promise<ApiResult> {
+  if (!hasKey(env)) return MISSING_KEY;
+  try {
+    const rows = await runSql<{
+      event_name: string;
+      block_timestamp: string;
+      transaction_hash: string;
+      log_index?: string;
+      parameters: Record<string, string>;
+    }>(
+      env,
+      `SELECT event_name, block_number, block_timestamp, transaction_hash, log_index, parameters FROM base_sepolia.events ` +
+        `WHERE address = '${POOL}' AND event_name IN ('Joined', 'Left', 'ClaimFiled', 'Voted', 'ClaimResolved') ` +
+        `ORDER BY block_number DESC LIMIT 30`,
+    );
+    const events = rows.map((r) => ({
+      event: r.event_name,
+      at: Date.parse(r.block_timestamp),
+      tx: r.transaction_hash,
+      logIndex: Number(r.log_index ?? 0),
+      params: r.parameters,
+    }));
+    return { status: 200, body: { events } };
+  } catch (e) {
+    return { status: 502, body: { error: message(e, 'Activity lookup failed') } };
   }
 }
 

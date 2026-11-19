@@ -3,9 +3,12 @@ import { usePool } from '../state/PoolContext';
 import { EXPLORER, POOL_ADDRESS } from '../lib/chain';
 import { shortAddr, usd } from '../lib/format';
 import { TxToast } from './TxToast';
+import { DemoBanner } from './DemoBanner';
+import { useDemoMode } from '../state/DemoMode';
 
 export function Layout() {
   const pool = usePool();
+  const demoMode = useDemoMode();
   const { you, me, isConnected, wrongNetwork, busy, error } = pool;
 
   return (
@@ -38,7 +41,7 @@ export function Layout() {
         {isConnected ? (
           <span className="wallet-area">
             <span className="muted small">
-              {usd(pool.usdcBalance)} USDC · {pool.ethBalance.toFixed(4)} ETH
+              {usd(pool.usdcBalance)} USDC
             </span>
             <button
               type="button"
@@ -56,17 +59,23 @@ export function Layout() {
               type="button"
               className="button button-ghost button-small"
               onClick={pool.disconnect}
-              title="Disconnect"
+              title={demoMode.demo ? 'Exit demo' : 'Disconnect'}
             >
-              Disconnect
+              {demoMode.demo ? 'Exit demo' : 'Disconnect'}
             </button>
           </span>
         ) : (
-          <button type="button" className="button" onClick={() => void pool.connect()}>
-            Connect wallet
-          </button>
+          <span className="wallet-area">
+            <button type="button" className="button button-ghost" onClick={demoMode.enter}>
+              Try demo
+            </button>
+            <button type="button" className="button" onClick={() => void pool.connect()}>
+              Connect wallet
+            </button>
+          </span>
         )}
       </header>
+      <DemoBanner />
 
       {wrongNetwork && (
         <p className="banner banner-warn">

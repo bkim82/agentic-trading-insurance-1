@@ -96,7 +96,7 @@ export function StrategyChips({ text, broken = [] }: { text: string; broken?: st
 /** Ring that empties as voting time runs out; turns orange in the last minute. */
 export function CountdownRing({ end, total, now }: { end: number; total: number; now: number }) {
   const left = Math.max(0, end - now);
-  const frac = total > 0 ? left / total : 0;
+  const frac = total > 0 ? Math.min(1, left / total) : 0;
   const circumference = 2 * Math.PI * 14;
   const secs = Math.ceil(left / 1000);
   const label =
@@ -104,7 +104,7 @@ export function CountdownRing({ end, total, now }: { end: number; total: number;
       ? timeLeft(end, now).replace(' left', '')
       : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   return (
-    <span className={left <= 60_000 ? 'ring ring-urgent' : 'ring'} title={timeLeft(end, now)}>
+    <span className={left <= Math.min(60_000, total * 0.25) ? 'ring ring-urgent' : 'ring'} title={timeLeft(end, now)}>
       <svg viewBox="0 0 34 34" aria-hidden="true">
         <circle cx="17" cy="17" r="14" className="ring-track" />
         <circle
@@ -290,12 +290,22 @@ function ClaimEvidence({ claim, payout }: { claim: Claim; payout: number }) {
       </p>
 
       <dl className="kv">
-        <dt>Transaction</dt>
+        <dt>{claim.sellTxHash ? 'Buy' : 'Transaction'}</dt>
         <dd>
           <a href={`${EXPLORER}/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
             {shortAddr(claim.txHash)}
           </a>
         </dd>
+        {claim.sellTxHash && (
+          <>
+            <dt>Sell</dt>
+            <dd>
+              <a href={`${EXPLORER}/tx/${claim.sellTxHash}`} target="_blank" rel="noreferrer">
+                {shortAddr(claim.sellTxHash)}
+              </a>
+            </dd>
+          </>
+        )}
         {claim.lossLines.map((l, i) => (
           <KvRow
             key={i}
@@ -304,14 +314,17 @@ function ClaimEvidence({ claim, payout }: { claim: Claim; payout: number }) {
           />
         ))}
         <dt>
-          <strong>Loss</strong>
+          <strong>{claim.sellTxHash ? 'Realized loss (claimed)' : 'Loss'}</strong>
         </dt>
         <dd>
-          <strong>{usd(loss)}</strong>
+          <strong>{usd(claim.sellTxHash ? claim.requested : loss)}</strong>
         </dd>
         <dt>Pays if approved</dt>
         <dd>{usd(payout)}</dd>
       </dl>
+      {claim.sellTxHash && (
+        <p className="muted small">The full claim page re-reads both trades and their prices to check this amount.</p>
+      )}
     </>
   );
 }
