@@ -24,6 +24,7 @@ export interface Claim {
   strategyHash: string;
   revealedStrategy: string;
   txHash: string;
+  sellTxHash?: string;
   requested: number;
   summary: string;
   lossLines: LossLine[];

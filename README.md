@@ -11,12 +11,9 @@ Contract: `src/AgentInsurancePool.sol`
    full strategy text; `strategyURI` points to it (an IPFS link, or the plain text if you don't mind it
    being public). Your stake is held in the pool token (e.g. USDC). To change your strategy, leave and rejoin.
 2. **Wait.** Coverage starts after a waiting period (7 days in production).
-3. **File a claim.** Call `fileClaim(txHash, requestedAmount, evidenceURI)`. Filing is free.
-   - `requestedAmount` is the loss: the value of what left the wallet minus the value of what came back,
-     both priced at the block of the trade. Later price moves don't count. Tokens with no market price
-     count as zero.
-   - `evidenceURI` should show the strategy text (matching `strategyHash`), why the trade breaks it,
-     that the transaction came from your registered agent, and the loss math with price sources.
+3. **File a claim in the demo UI.** Enter a buy and later sell transaction sent by the registered agent. The sell must close the full amount of the ERC-20 asset bought; ETH/native transfers and partial closes aren't supported by the automatic calculation.
+   The app reads the transfers and historical quote-token prices, calculates the realized USD loss (buy spend minus sell proceeds), and shows both transactions to voters. Later price moves **do** count if realized by the sell. Loss figures cannot be edited in the form; the explanation of the strategy violation is claimant-written.
+   The deployed contract still accepts `fileClaim(txHash, requestedAmount, evidenceURI)`: it records the buy hash and an amount supplied by the browser, with the sell hash in `evidenceURI`. It does **not** verify either trade, loss, or strategy compliance. Direct contract calls can supply arbitrary values, so voters must independently check both explorer transactions, the strategy, counterparties, and the loss. Earlier one-hash claims remain visible as legacy claims.
 4. **Vote (3 days in production).** Members who joined before the claim vote `Approve`, `Reject`, or `Fraud`, weighted by
    stake. The claimant can't vote.
 5. **Resolve.** Anyone calls `resolve(claimId)` after voting ends.
@@ -49,8 +46,7 @@ to their stake.
 
 ## Known limits (fine for a demo, worth fixing before real money)
 
-- The contract can't check a transaction hash itself. Voters verify off-chain that the transaction exists,
-  came from the registered agent, happened after coverage started, and that the loss math is right.
+- The deployed contract does not validate transaction hashes, prices, the second hash in evidence, or losses. The UI only prevents editing in its own form; it is **not** fraud-proof. Voters verify the two transactions and the requested amount independently before approving.
 - Resolving loops over every voter, so gas grows with the number of voters. Fine for a small pool.
 - Vote weight is the voter's stake when they vote.
 - Any open claim blocks everyone from leaving. Each claim ends after one voting period, but someone could keep
@@ -112,5 +108,5 @@ npm run dev
 
 `.env.local` is git-ignored. Optional: set `VITE_RPC_URL` to use a different Base Sepolia RPC.
 
-Claim evidence (a summary and the loss lines) is stored on-chain as JSON in the claim's `evidenceURI`. The
+New claim evidence stores the strategy explanation and sell hash as JSON in `evidenceURI`; legacy claims may contain claimant-supplied loss lines. The
 committed strategy text is stored as the member's `strategyURI`, and its keccak256 hash is the commitment.

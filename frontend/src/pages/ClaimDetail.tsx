@@ -1,5 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import type { Address, Hash, PublicClient } from 'viem';
+import { usePublicClient } from 'wagmi';
+import { RoundTripReview } from '../components/RoundTripReview';
+import { CHAIN } from '../lib/chain';
+import { readRoundTrip, type RoundTrip } from '../lib/roundTrip';
 import { usePool } from '../state/PoolContext';
 import { StatusBadge, TallyBar } from '../components/ClaimBits';
 import { lossFromLines, outcomeFor, payoutFor, RULES, type VoteChoice } from '../lib/rules';
@@ -8,8 +13,8 @@ import type { Claim } from '../lib/types';
 import { EXPLORER } from '../lib/chain';
 
 const VOTE_HELP: Record<VoteChoice, string> = {
-  approve: 'The trade broke the committed strategy and the loss math is right.',
-  reject: 'The trade was allowed by the strategy, or the amount is wrong.',
+  approve: 'The transactions broke the committed strategy and the loss is supported.',
+  reject: 'The trades were allowed by the strategy, or the amount is wrong.',
   fraud: 'The claimant staged the loss (for example, sent funds to a token or wallet they control).',
 };
 
@@ -70,57 +75,38 @@ function ClaimDetailBody({ id }: { id: number }) {
               : 'This text does not match the committed fingerprint. Treat the claim with suspicion.'}
           </p>
 
-          <h3>Transaction</h3>
-          <p className="mono">
-            <a href={`${EXPLORER}/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
-              {shortAddr(claim.txHash)}
-            </a>
-          </p>
-          <p className="muted">Agent: {claim.agent}</p>
-
-          <h3>Loss: value out minus value in</h3>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Direction</th>
-                <th>Token</th>
-                <th className="num">Amount</th>
-                <th className="num">Price at trade</th>
-                <th className="num">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claim.lossLines.map((l, i) => (
-                <tr key={i}>
-                  <td>{l.direction === 'out' ? 'Left wallet' : 'Came back'}</td>
-                  <td>{l.token}</td>
-                  <td className="num">{l.amount.toLocaleString()}</td>
-                  <td className="num">{price(l.priceUsd)}</td>
-                  <td className="num">
-                    {l.direction === 'out' ? '' : '−'}
-                    {usd(l.amount * l.priceUsd)}
-                  </td>
-                </tr>
-              ))}
-              <tr className="total-row">
-                <td colSpan={4}>Calculated loss</td>
-                <td className="num">{usd(computedLoss)}</td>
-              </tr>
-            </tbody>
-          </table>
-          {Math.abs(computedLoss - claim.requested) > 0.01 && (
-            <p className="warn">
-              The requested amount ({usd(claim.requested)}) differs from the calculated loss ({usd(computedLoss)}).
-            </p>
+          {claim.sellTxHash ? (
+            <PairEvidence claim={claim} coveredFrom={claimant?.coveredFrom ?? 0} />
+          ) : (
+            <>
+              <h3>Transaction</h3>
+              <p className="mono"><a href={`${EXPLORER}/tx/${claim.txHash}`} target="_blank" rel="noreferrer">{shortAddr(claim.txHash)}</a></p>
+              <p className="muted">Agent: {claim.agent}</p>
+              <h3>Claimant-supplied loss lines (legacy claim)</h3>
+              <table className="table">
+                <thead><tr><th>Direction</th><th>Token</th><th className="num">Amount</th><th className="num">Price at trade</th><th className="num">Value</th></tr></thead>
+                <tbody>
+                  {claim.lossLines.map((l, i) => (
+                    <tr key={i}>
+                      <td>{l.direction === 'out' ? 'Left wallet' : 'Came back'}</td>
+                      <td>{l.token}</td>
+                      <td className="num">{l.amount.toLocaleString()}</td>
+                      <td className="num">{price(l.priceUsd)}</td>
+                      <td className="num">{l.direction === 'out' ? '' : '−'}{usd(l.amount * l.priceUsd)}</td>
+                    </tr>
+                  ))}
+                  <tr className="total-row"><td colSpan={4}>Claimant's calculated loss</td><td className="num">{usd(computedLoss)}</td></tr>
+                </tbody>
+              </table>
+              {Math.abs(computedLoss - claim.requested) > 0.01 && <p className="warn">Requested amount ({usd(claim.requested)}) differs from the claimant's calculation ({usd(computedLoss)}).</p>}
+            </>
           )}
 
           <h3>Before you vote, check</h3>
           <ul className="checklist">
-            <li>The transaction was sent from the registered agent address.</li>
-            <li>It happened after the claimant's coverage started.</li>
-            <li>The trade clearly breaks a rule in the committed strategy.</li>
-            <li>The prices match market data at that block.</li>
-            <li>Where the money went: a token or wallet tied to the claimant suggests fraud.</li>
+            <li>Check {claim.sellTxHash ? 'both agent transactions and coverage dates' : 'the agent transaction and coverage date'}.</li>
+            <li>Compare the trades with the actual rule in the committed strategy; this is not automatic.</li>
+            <li>Check the prices, trade counterparties, and whether the claimant controls the destination.</li>
           </ul>
         </section>
 
@@ -173,6 +159,36 @@ function ClaimDetailBody({ id }: { id: number }) {
           {claim.status !== 'open' && ballot && <VoteResult claim={claim} vote={ballot.vote} />}
         </aside>
       </div>
+    </>
+  );
+}
+
+function PairEvidence({ claim, coveredFrom }: { claim: Claim; coveredFrom: number }) {
+  const client = usePublicClient({ chainId: CHAIN.id }) as PublicClient | undefined;
+  const [result, setResult] = useState<{ pair?: RoundTrip; error?: string } | null>(null);
+  useEffect(() => {
+    if (!client || !claim.sellTxHash) return;
+    let cancelled = false;
+    void readRoundTrip(client, claim.txHash as Hash, claim.sellTxHash as Hash, claim.agent as Address, coveredFrom)
+      .then((pair) => { if (!cancelled) setResult({ pair }); })
+      .catch((e: unknown) => { if (!cancelled) setResult({ error: e instanceof Error ? e.message : String(e) }); });
+    return () => { cancelled = true; };
+  }, [client, claim.txHash, claim.sellTxHash, claim.agent, coveredFrom]);
+  const pair = result?.pair;
+  return (
+    <>
+      <p className="muted">Registered agent: {claim.agent}</p>
+      {!result && <p className="muted">Verifying buy and sell transactions…</p>}
+      {result?.error && <p className="warn" role="alert">Could not verify the round trip: {result.error}. Do not approve based on the claimant's amount alone.</p>}
+      {pair && claim.sellTxHash && (
+        <>
+          <RoundTripReview pair={pair} buyHash={claim.txHash} sellHash={claim.sellTxHash} />
+          {Math.abs(Number(pair.loss.toFixed(6)) - claim.requested) > 0.000001 && (
+            <p className="warn" role="alert">On-chain requested amount ({usd(claim.requested)}) differs from the amount recalculated from the trades ({usd(pair.loss)}). Do not approve without investigating.</p>
+          )}
+          {pair.loss === 0 && <p className="warn">No realized loss was found in this pair.</p>}
+        </>
+      )}
     </>
   );
 }

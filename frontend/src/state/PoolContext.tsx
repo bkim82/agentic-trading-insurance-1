@@ -54,7 +54,7 @@ interface PoolApi extends Snapshot {
   requestTestFunds: () => Promise<void>;
   join: (agent: string, strategyText: string, amount: number) => Promise<boolean>;
   leave: () => Promise<boolean>;
-  fileClaim: (input: { txHash: string; summary: string; lossLines: LossLine[]; requested: number }) => Promise<number | null>;
+  fileClaim: (input: { buyHash: string; sellHash: string; summary: string; requested: number }) => Promise<number | null>;
   vote: (claimId: number, choice: VoteChoice) => Promise<boolean>;
   resolve: (claimId: number) => Promise<boolean>;
 }
@@ -90,13 +90,14 @@ function toLossLine(raw: unknown): LossLine[] {
   return [{ direction: l.direction, token: String(l.token ?? '?'), amount, priceUsd }];
 }
 
-/** Evidence is stored on-chain as JSON: { summary, lossLines }. Anything else is shown as plain text. */
-function parseEvidence(evidenceURI: string): { summary: string; lossLines: LossLine[] } {
+/** Legacy claims can contain claimant-supplied loss lines; new claims store only a sell hash. */
+function parseEvidence(evidenceURI: string): { summary: string; lossLines: LossLine[]; sellTxHash?: Hash } {
   try {
-    const parsed = JSON.parse(evidenceURI) as { summary?: unknown; lossLines?: unknown };
+    const parsed = JSON.parse(evidenceURI) as { summary?: unknown; lossLines?: unknown; sellTxHash?: unknown };
     return {
       summary: typeof parsed.summary === 'string' ? parsed.summary : '',
       lossLines: Array.isArray(parsed.lossLines) ? parsed.lossLines.flatMap(toLossLine) : [],
+      sellTxHash: typeof parsed.sellTxHash === 'string' ? parsed.sellTxHash as Hash : undefined,
     };
   } catch {
     return { summary: evidenceURI, lossLines: [] };
@@ -215,6 +216,7 @@ async function fetchSnapshot(client: PublicClient, you: Address | undefined): Pr
         strategyHash: claimant?.strategyHash ?? '',
         revealedStrategy: claimant?.strategyText ?? '',
         txHash: c.txHash,
+        sellTxHash: evidence.sellTxHash,
         requested: toUsd(c.requestedAmount),
         summary: evidence.summary,
         lossLines: evidence.lossLines,
@@ -402,11 +404,11 @@ export function PoolProvider({ children }: { children: ReactNode }) {
   }, [config, runTx]);
 
   const fileClaim = useCallback<PoolApi['fileClaim']>(
-    async ({ txHash, summary, lossLines, requested }) => {
-      const evidence = JSON.stringify({ summary, lossLines });
+    async ({ buyHash, sellHash, summary, requested }) => {
+      const evidence = JSON.stringify({ summary, sellTxHash: sellHash });
       const units = parseUnits(requested.toFixed(USDC_DECIMALS), USDC_DECIMALS);
       const receipt = await runTx('Filing your claim…', () =>
-        writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'fileClaim', args: [txHash as Hash, units, evidence] }),
+        writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'fileClaim', args: [buyHash as Hash, units, evidence] }),
       );
       if (!receipt) return null;
       for (const log of receipt.logs) {

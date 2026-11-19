@@ -2,9 +2,11 @@ import { keccak256, toHex } from 'viem';
 import type { ClaimStatus, VoteChoice } from './rules';
 
 const usdFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+const preciseUsdFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 6 });
 
 export function usd(n: number): string {
-  return usdFormat.format(n);
+  if (n > 0 && n < 0.000001) return '<$0.000001';
+  return n !== 0 && Math.abs(n) < 1 ? preciseUsdFormat.format(n) : usdFormat.format(n);
 }
 
 export function pct(n: number, digits = 0): string {
@@ -32,7 +34,7 @@ export function timeLeft(untilMs: number, nowMs: number): string {
 }
 
 export function date(ms: number): string {
-  return new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return new Date(ms).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
 }
 
 export const STATUS_LABEL: Record<ClaimStatus, string> = {

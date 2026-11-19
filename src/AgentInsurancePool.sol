@@ -12,8 +12,8 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 ///
 /// - Join with a stake, your agent's address, and a commitment to your strategy.
 ///   Coverage starts after a waiting period (7 days in production).
-/// - File a claim with the offending transaction hash, the loss, and an evidence link.
-///   Loss = value out minus value in, priced at the trade's block (computed off-chain, checked by voters).
+/// - File a claim with one primary transaction hash, a claimant-supplied amount, and evidence.
+///   The demo UI includes a second sell hash in evidence and derives realized loss off-chain; voters verify both.
 /// - Members vote Approve / Reject / Fraud during the voting period (3 days in production), weighted by stake.
 /// - At least 20% of total stake must vote. Approve or Fraud needs more than half the votes cast.
 ///   Fraud slashes the claimant's whole stake into the pool.
@@ -187,8 +187,8 @@ contract AgentInsurancePool is ReentrancyGuard {
 
     /// @notice File a claim that your agent broke your committed strategy.
     /// @param txHash The offending transaction.
-    /// @param requestedAmount Loss in pool tokens: value out minus value in, priced at the trade's block.
-    /// @param evidenceURI Strategy text, why the trade breaks it, and the loss math.
+    /// @param requestedAmount Claimant-supplied loss in pool tokens; the contract does not verify its calculation.
+    /// @param evidenceURI Off-chain evidence; the demo UI includes the sell hash and strategy explanation.
     function fileClaim(bytes32 txHash, uint256 requestedAmount, string calldata evidenceURI)
         external
         returns (uint256 claimId)
