@@ -70,3 +70,18 @@ forge build
 forge test
 TOKEN=<erc20> MIN_STAKE=100000000 forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast --account <keystore>
 ```
+
+## Frontend
+
+A clickable template lives in `frontend/` (React + Vite). It runs on sample data and isn't connected to the
+contract yet. Every action goes through `frontend/src/state/PoolContext.tsx`, which mirrors the contract's
+functions one to one, and the payout and voting math lives in `frontend/src/lib/rules.ts`. To wire it up,
+replace those function bodies with contract calls (viem is already installed).
+
+```shell
+cd frontend
+npm install
+npm run dev
+```
+
+Use "Skip ahead 3 days" in the footer to end a vote and try resolving and settling claims.
