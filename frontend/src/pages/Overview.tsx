@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { ClaimCard } from '../components/ClaimBits';
 import { ActivityFeed } from '../components/ActivityFeed';
+import { PoolTank } from '../components/PoolTank';
 import { payoutFor, RULES } from '../lib/rules';
 import { duration, pct, timeLeft, usd } from '../lib/format';
 import { voteEligibility } from '../lib/voting';
@@ -23,8 +24,7 @@ export function Overview() {
     <>
       <div className="summary-grid">
         <section className="card">
-          <p className="label">Pool</p>
-          <p className="big-number">{usd(poolAssets)}</p>
+          <PoolTank total={poolAssets} mine={me?.active ? me.stake : 0} />
           <p className="muted small">
             {active} {active === 1 ? 'member' : 'members'} · {usd(paid)} paid out
           </p>
