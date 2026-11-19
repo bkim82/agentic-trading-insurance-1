@@ -11,8 +11,21 @@ export function Layout() {
     <div className="page">
       <header className="site-header">
         <NavLink to="/" className="brand">
-          <span className="brand-mark" aria-hidden="true" />
-          Agent Insurance
+          <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="16" cy="16" r="16" fill="#0052FF" />
+            <path d="M16 7.5 23 10v5.6c0 4.3-2.9 7.6-7 8.9-4.1-1.3-7-4.6-7-8.9V10z" fill="#fff" />
+            <path
+              d="m12.6 15.9 2.4 2.4 4.4-4.6"
+              fill="none"
+              stroke="#0052FF"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span>
+            Coinbase <span className="brand-product">Cover</span>
+          </span>
         </NavLink>
         <nav className="nav">
           <NavLink to="/" end>

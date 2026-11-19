@@ -516,11 +516,13 @@ h1 {
   letter-spacing: -0.01em;
 }
 .brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: inset 0 0 0 7px var(--accent), inset 0 0 0 14px #fff;
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+.brand-product {
+  font-weight: 500;
+  color: var(--accent);
 }
 .nav a {
   font-weight: 500;
