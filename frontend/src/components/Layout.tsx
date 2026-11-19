@@ -11,7 +11,8 @@ export function Layout() {
     <div className="page">
       <header className="site-header">
         <NavLink to="/" className="brand">
-          Agent Insurance Pool
+          <span className="brand-mark" aria-hidden="true" />
+          Agent Insurance
         </NavLink>
         <nav className="nav">
           <NavLink to="/" end>
@@ -25,13 +26,24 @@ export function Layout() {
             <span className="muted small">
               {usd(pool.usdcBalance)} USDC · {pool.ethBalance.toFixed(4)} ETH
             </span>
-            <button type="button" className="link-button small" onClick={() => void pool.requestTestFunds()} disabled={!!busy}>
+            <button
+              type="button"
+              className="button button-ghost button-small"
+              onClick={() => void pool.requestTestFunds()}
+              disabled={!!busy}
+            >
               Get test funds
             </button>
             <span className="wallet" title={you}>
+              <span className="wallet-dot" aria-hidden="true" />
               {shortAddr(you)}
             </span>
-            <button type="button" className="link-button small" onClick={pool.disconnect}>
+            <button
+              type="button"
+              className="button button-ghost button-small"
+              onClick={pool.disconnect}
+              title="Disconnect"
+            >
               Disconnect
             </button>
           </span>
@@ -72,9 +84,7 @@ export function Layout() {
         </p>
       )}
 
-      <main>
-        {pool.loading ? <p className="muted">Loading the pool from Base Sepolia…</p> : <Outlet />}
-      </main>
+      <main>{pool.loading ? <p className="muted">Loading the pool from Base Sepolia…</p> : <Outlet />}</main>
 
       <footer className="site-footer">
         <span>

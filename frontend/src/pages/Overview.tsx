@@ -1,80 +1,90 @@
 import { Link } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
-import { RULES } from '../lib/rules';
-import { duration, pct, usd } from '../lib/format';
+import { ClaimCard } from '../components/ClaimBits';
+import { payoutFor, RULES } from '../lib/rules';
+import { duration, pct, timeLeft, usd } from '../lib/format';
+import { voteEligibility } from '../lib/voting';
 
 export function Overview() {
-  const { members, claims, poolAssets, me, openClaimCount, params } = usePool();
-  const active = members.filter((m) => m.active);
+  const { members, claims, poolAssets, me, you, now, params } = usePool();
+  const active = members.filter((m) => m.active).length;
   const paid = claims.filter((c) => c.status === 'approved').reduce((s, c) => s + c.payout, 0);
+  const open = claims.filter((c) => c.status === 'open');
+  const needsVote = open.filter((c) => voteEligibility(c, me, you, now).kind === 'can');
+  const shown = needsVote.length > 0 ? needsVote : open;
+  const covered = me ? now >= me.coveredFrom : false;
 
   return (
     <>
-      <h1>Insurance for AI trading agents</h1>
-      <p className="lede">
-        Members stake into a shared pool and commit to the strategy their trading agent must follow. If an agent breaks
-        that strategy and loses money, the owner files a claim and the pool votes on whether to pay.
-      </p>
+      <div className="summary-grid">
+        <section className="card">
+          <p className="label">Pool</p>
+          <p className="big-number">{usd(poolAssets)}</p>
+          <p className="muted small">
+            {active} {active === 1 ? 'member' : 'members'} · {usd(paid)} paid out
+          </p>
+        </section>
 
-      <dl className="facts">
-        <div>
-          <dt>Pool size</dt>
-          <dd>{usd(poolAssets)}</dd>
-        </div>
-        <div>
-          <dt>Members</dt>
-          <dd>{active.length}</dd>
-        </div>
-        <div>
-          <dt>Claims in voting</dt>
-          <dd>{openClaimCount}</dd>
-        </div>
-        <div>
-          <dt>Paid out</dt>
-          <dd>{usd(paid)}</dd>
-        </div>
-      </dl>
+        <section className="card">
+          <p className="label">Your coverage</p>
+          {me ? (
+            <>
+              <p className="big-number">{usd(me.stake)}</p>
+              <p className="muted small">
+                {covered ? (
+                  <span className="pos">● Active</span>
+                ) : (
+                  <span className="warn">● Starts in {timeLeft(me.coveredFrom, now).replace(' left', '')}</span>
+                )}{' '}
+                · max payout {usd(payoutFor(Infinity, me.stake, poolAssets).payout)}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="big-number muted">Not covered</p>
+              <Link to="/join" className="button button-small">
+                Join the pool
+              </Link>
+            </>
+          )}
+        </section>
+      </div>
 
-      <p>
-        {me ? (
-          <>
-            You have {usd(me.stake)} staked. <Link to="/claims">Review open claims</Link> or{' '}
-            <Link to="/claims/new">file a claim</Link>.
-          </>
-        ) : (
-          <>
-            <Link to="/join">Join the pool</Link> to get covered and vote on claims.
-          </>
-        )}
-      </p>
+      <div className="section-head">
+        <h2>{needsVote.length > 0 ? 'Needs your vote' : 'In voting'}</h2>
+        <Link to="/claims">All claims</Link>
+      </div>
+      {shown.length > 0 ? (
+        <div className="card-grid">
+          {shown.map((c) => (
+            <ClaimCard key={c.id} claim={c} />
+          ))}
+        </div>
+      ) : (
+        <p className="card muted empty">No claims are in voting right now.</p>
+      )}
 
       <h2>How it works</h2>
-      <ol className="steps">
-        <li>
-          <strong>Join.</strong> Stake at least {usd(params.minStake)}, register your agent's address, and commit to your
-          strategy. Coverage starts {duration(params.waitingPeriodMs)} after you join.
+      <ol className="steps-row">
+        <li className="card">
+          <strong>Join</strong>
+          <span>Stake {usd(params.minStake)}+ and commit your agent's strategy.</span>
         </li>
-        <li>
-          <strong>File a claim.</strong> Point to the transaction where your agent broke the strategy and state the loss:
-          what left the wallet minus what came back, priced at that moment.
+        <li className="card">
+          <strong>Wait</strong>
+          <span>Coverage starts {duration(params.waitingPeriodMs)} after joining.</span>
         </li>
-        <li>
-          <strong>Members vote</strong> for {duration(params.votingPeriodMs)}: approve, reject, or fraud. Voters on
-          the losing side lose {pct(RULES.voterPenaltyPct)} of their stake to the voters who got it right.
+        <li className="card">
+          <strong>Claim</strong>
+          <span>Point to the trade that broke the strategy and the loss.</span>
         </li>
-        <li>
-          <strong>Outcome.</strong> At least {pct(RULES.quorumPct)} of the pool must vote. Approval needs more than half
-          of the votes. A fraud verdict takes the claimant's whole stake.
+        <li className="card">
+          <strong>Vote</strong>
+          <span>
+            {pct(RULES.quorumPct)} quorum; majority decides. Pays up to {pct(RULES.coveragePct)} of the loss.
+          </span>
         </li>
       </ol>
-
-      <h2>Payout limits</h2>
-      <p>An approved claim pays the smallest of:</p>
-      <ul>
-        <li>{pct(RULES.coveragePct)} of the loss (you absorb the rest)</li>
-        <li>your own stake</li>
-        <li>{pct(RULES.maxPoolPayoutPct)} of the pool</li>
-      </ul>
     </>
   );
 }
