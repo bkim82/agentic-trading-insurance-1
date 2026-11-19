@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { StatusBadge, TallyBar } from '../components/ClaimBits';
 import { lossFromLines, outcomeFor, payoutFor, RULES, type VoteChoice } from '../lib/rules';
@@ -14,16 +14,13 @@ const VOTE_HELP: Record<VoteChoice, string> = {
 
 export function ClaimDetail() {
   const { id } = useParams();
-  // Keyed by id so the vote and refile drafts reset when moving between claims.
+  // Keyed by id so a half-chosen vote resets when moving between claims.
   return <ClaimDetailBody key={id} id={Number(id)} />;
 }
 
 function ClaimDetailBody({ id }: { id: number }) {
-  const navigate = useNavigate();
   const pool = usePool();
   const [choice, setChoice] = useState<VoteChoice | null>(null);
-  const [refileAmount, setRefileAmount] = useState('');
-  const [refileSummary, setRefileSummary] = useState('');
 
   const claim = pool.claims.find((c) => c.id === id);
   if (!claim) {
@@ -57,12 +54,6 @@ function ClaimDetailBody({ id }: { id: number }) {
       <p className="muted">
         Filed {date(claim.createdAt)}
         {claim.status === 'open' && <> · {timeLeft(claim.votingEnds, pool.now)}</>}
-        {claim.refileOf && (
-          <>
-            {' '}
-            · Refile of <Link to={`/claims/${claim.refileOf}`}>#{claim.refileOf}</Link>
-          </>
-        )}
       </p>
 
       <div className="two-col">
@@ -70,7 +61,7 @@ function ClaimDetailBody({ id }: { id: number }) {
           <h2>What happened</h2>
           <p>{claim.summary}</p>
 
-          <h3>Committed strategy (version {claim.strategyVersion})</h3>
+          <h3>Committed strategy</h3>
           <blockquote>{claim.revealedStrategy}</blockquote>
           <p className={hashMatches ? 'ok' : 'warn'}>
             {hashMatches
@@ -78,16 +69,12 @@ function ClaimDetailBody({ id }: { id: number }) {
               : 'This text does not match the committed fingerprint. Treat the claim with suspicion.'}
           </p>
 
-          <h3>Transactions</h3>
-          <ul className="mono-list">
-            {claim.txHashes.map((h) => (
-              <li key={h}>
-                <a href={`https://basescan.org/tx/${h}`} target="_blank" rel="noreferrer">
-                  {shortAddr(h)}
-                </a>
-              </li>
-            ))}
-          </ul>
+          <h3>Transaction</h3>
+          <p className="mono">
+            <a href={`https://basescan.org/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
+              {shortAddr(claim.txHash)}
+            </a>
+          </p>
           <p className="muted">Agent: {claim.agent}</p>
 
           <h3>Loss: value out minus value in</h3>
@@ -129,7 +116,7 @@ function ClaimDetailBody({ id }: { id: number }) {
           <h3>Before you vote, check</h3>
           <ul className="checklist">
             <li>The transaction was sent from the registered agent address.</li>
-            <li>It happened after coverage started and under this strategy version.</li>
+            <li>It happened after the claimant's coverage started.</li>
             <li>The trade clearly breaks a rule in the committed strategy.</li>
             <li>The prices match market data at that block.</li>
             <li>Where the money went: a token or wallet tied to the claimant suggests fraud.</li>
@@ -141,8 +128,6 @@ function ClaimDetailBody({ id }: { id: number }) {
           <dl className="kv">
             <dt>Requested</dt>
             <dd>{usd(claim.requested)}</dd>
-            <dt>Claim bond</dt>
-            <dd>{usd(claim.bond)}</dd>
             {claim.status === 'approved' && (
               <>
                 <dt>Paid</dt>
@@ -176,42 +161,7 @@ function ClaimDetailBody({ id }: { id: number }) {
             </>
           )}
 
-          {claim.status !== 'open' && ballot && <SettlePanel claim={claim} onSettle={() => pool.settleVote(claim.id)} />}
-
-          {claim.claimant === pool.you &&
-            (claim.status === 'rejected' || claim.status === 'noQuorum') &&
-            !claim.refiled &&
-            claim.refileOf === null && (
-              <form
-                className="stack"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const newId = pool.refileClaim(claim.id, Number(refileAmount), refileSummary || claim.summary);
-                  navigate(`/claims/${newId}`);
-                }}
-              >
-                <h2>Refile once</h2>
-                <p className="muted">You can refile this claim one time, for example with a corrected amount.</p>
-                <label>
-                  New amount (USD)
-                  <input
-                    type="number"
-                    min="1"
-                    step="0.01"
-                    required
-                    value={refileAmount}
-                    onChange={(e) => setRefileAmount(e.target.value)}
-                  />
-                </label>
-                <label>
-                  What changed
-                  <textarea rows={3} value={refileSummary} onChange={(e) => setRefileSummary(e.target.value)} />
-                </label>
-                <button type="submit" className="button">
-                  Refile (bond {usd(Number(refileAmount || 0) * RULES.claimBondPct)})
-                </button>
-              </form>
-            )}
+          {claim.status !== 'open' && ballot && <VoteResult claim={claim} vote={ballot.vote} />}
         </aside>
       </div>
     </>
@@ -263,17 +213,17 @@ function VotePanel({
     );
   }
   if (claim.claimant === you) return <p className="muted">You can't vote on your own claim.</p>;
-  if (me.joinedAt >= claim.createdAt) return <p className="muted">You joined after this claim was filed, so you can't vote on it.</p>;
+  if (me.joinedAt >= claim.createdAt) {
+    return <p className="muted">You joined after this claim was filed, so you can't vote on it.</p>;
+  }
   if (ballot) {
     return (
       <p>
-        You voted <strong>{VOTE_LABEL[ballot.vote]}</strong> with {usd(ballot.weight)} of stake. Bond held:{' '}
-        {usd(ballot.bond)}.
+        You voted <strong>{VOTE_LABEL[ballot.vote]}</strong> with {usd(ballot.weight)} of stake.
       </p>
     );
   }
 
-  const bond = me.stake * RULES.voterBondPct;
   return (
     <form
       className="stack"
@@ -296,8 +246,8 @@ function VotePanel({
         ))}
       </fieldset>
       <p className="muted">
-        Your vote counts with {usd(me.stake)} of stake. It holds a bond of {usd(bond)}, which you lose if you end up on the
-        losing side (pay vs. don't pay).
+        Your vote counts with {usd(me.stake)} of stake. If you end up on the losing side (pay vs. don't pay), you lose{' '}
+        {usd(me.stake * RULES.voterPenaltyPct)} ({pct(RULES.voterPenaltyPct)}) to the voters who got it right.
       </p>
       <button type="submit" className="button" disabled={!choice}>
         Submit vote
@@ -306,38 +256,17 @@ function VotePanel({
   );
 }
 
-function SettlePanel({ claim, onSettle }: { claim: Claim; onSettle: () => void }) {
-  const { you } = usePool();
-  const b = claim.ballots[you];
-  if (!b) return null;
-
-  let reward = 0;
+function VoteResult({ claim, vote }: { claim: Claim; vote: VoteChoice }) {
   if (claim.status === 'noQuorum') {
-    reward = b.bond;
-  } else {
-    const paid = claim.status === 'approved';
-    if ((b.vote === 'approve') === paid) {
-      const win = paid ? claim.payBonds : claim.noPayBonds;
-      const lose = paid ? claim.noPayBonds : claim.payBonds;
-      reward = b.bond + (win > 0 ? (b.bond * lose) / win : 0);
-    }
+    return <p className="muted">You voted {VOTE_LABEL[vote]}. Not enough members voted, so nobody gained or lost stake.</p>;
   }
-
-  if (b.settled) {
-    return <p className="muted">Your vote ({VOTE_LABEL[b.vote]}) is settled.</p>;
-  }
+  const won = (vote === 'approve') === (claim.status === 'approved');
   return (
-    <div className="stack">
-      <h3>Settle your vote</h3>
-      <p>
-        You voted {VOTE_LABEL[b.vote]}.{' '}
-        {reward > 0
-          ? `You get back ${usd(reward)} (your ${usd(b.bond)} bond${reward > b.bond ? ' plus winnings' : ''}).`
-          : `You were on the losing side, so your ${usd(b.bond)} bond goes to the winners.`}
-      </p>
-      <button type="button" className="button" onClick={onSettle}>
-        Settle
-      </button>
-    </div>
+    <p className="muted">
+      You voted {VOTE_LABEL[vote]}.{' '}
+      {won
+        ? 'You were on the winning side and received a share of the losing voters’ penalty.'
+        : `You were on the losing side and lost ${pct(RULES.voterPenaltyPct)} of your stake.`}
+    </p>
   );
 }

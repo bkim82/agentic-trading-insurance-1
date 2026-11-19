@@ -56,13 +56,11 @@ export function Overview() {
         </li>
         <li>
           <strong>File a claim.</strong> Point to the transaction where your agent broke the strategy and state the loss:
-          what left the wallet minus what came back, priced at that moment. Filing costs a bond of{' '}
-          {pct(RULES.claimBondPct)} of the amount.
+          what left the wallet minus what came back, priced at that moment.
         </li>
         <li>
-          <strong>Members vote</strong> for {RULES.votingPeriodMs / 86_400_000} days: approve, reject, or fraud. Each vote
-          puts up {pct(RULES.voterBondPct)} of the voter's stake, which goes to the other side if they vote with the
-          losing side.
+          <strong>Members vote</strong> for {RULES.votingPeriodMs / 86_400_000} days: approve, reject, or fraud. Voters on
+          the losing side lose {pct(RULES.voterPenaltyPct)} of their stake to the voters who got it right.
         </li>
         <li>
           <strong>Outcome.</strong> At least {pct(RULES.quorumPct)} of the pool must vote. Approval needs more than half

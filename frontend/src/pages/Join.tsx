@@ -23,15 +23,6 @@ export function Join() {
     );
   }
 
-  const myRecord = pool.memberOf(pool.you);
-  if (myRecord?.banned) {
-    return (
-      <>
-        <h1>You can't rejoin</h1>
-        <p>This address was removed from the pool after a fraud verdict.</p>
-      </>
-    );
-  }
 
   const stake = Number(amount || 0);
   const agentTaken = pool.members.some((m) => m.active && m.agent.toLowerCase() === agent.toLowerCase());
@@ -87,8 +78,8 @@ export function Join() {
         {stakeError && <p className="warn">{stakeError}</p>}
 
         <p className="muted">
-          Coverage starts {date(coverageStarts)}, after a {RULES.waitingPeriodMs / 86_400_000} day wait. Changing your
-          strategy later restarts the wait.
+          Coverage starts {date(coverageStarts)}, after a {RULES.waitingPeriodMs / 86_400_000} day wait. To change your
+          strategy later, you leave and rejoin, which restarts the wait.
         </p>
 
         <button type="submit" className="button" disabled={!canSubmit}>

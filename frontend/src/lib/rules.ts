@@ -6,12 +6,10 @@ export const DAY = 24 * 60 * 60 * 1000;
 export const RULES = {
   waitingPeriodMs: 7 * DAY,
   votingPeriodMs: 3 * DAY,
-  claimBondPct: 0.1, // 10% of requested loss
-  voterBondPct: 0.01, // 1% of voter's stake
+  voterPenaltyPct: 0.01, // losing voters lose 1% of their stake to the winners
   quorumPct: 0.2, // 20% of total stake must vote
   coveragePct: 0.8, // pays 80% of the loss
   maxPoolPayoutPct: 0.1, // a claim pays at most 10% of the pool
-  maxTxHashes: 5,
   minStake: 100,
 } as const;
 

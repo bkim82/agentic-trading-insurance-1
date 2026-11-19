@@ -1,14 +1,11 @@
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { RULES } from '../lib/rules';
-import { date, pct, timeLeft, usd, VOTE_LABEL } from '../lib/format';
+import { pct, STATUS_LABEL, timeLeft, usd } from '../lib/format';
 
 export function Account() {
   const pool = usePool();
   const navigate = useNavigate();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
 
   const { me } = pool;
   if (!me) {
@@ -24,16 +21,8 @@ export function Account() {
 
   const covered = pool.now >= me.coveredFrom;
   const myClaims = pool.claims.filter((c) => c.claimant === pool.you);
-  const unsettled = pool.claims.filter((c) => c.status !== 'open' && c.ballots[pool.you] && !c.ballots[pool.you].settled);
-  const hasOpenClaim = myClaims.some((c) => c.status === 'open');
-  const share = pool.totalStake ? me.stake / pool.totalStake : 0;
-
-  const leaveBlocker =
-    pool.openClaimCount > 0
-      ? 'You can leave once no claims are in voting, so nobody can exit to avoid paying a claim.'
-      : unsettled.length > 0
-        ? 'Settle your votes first.'
-        : null;
+  const share = pool.poolAssets ? me.stake / pool.poolAssets : 0;
+  const canLeave = pool.openClaimCount === 0;
 
   return (
     <>
@@ -61,66 +50,9 @@ export function Account() {
       <h2>Agent</h2>
       <p className="mono">{me.agent}</p>
 
-      <h2>Strategy (version {me.strategyVersion})</h2>
-      {editing ? (
-        <form
-          className="stack"
-          onSubmit={(e) => {
-            e.preventDefault();
-            pool.updateStrategy(draft.trim());
-            setEditing(false);
-          }}
-        >
-          <label>
-            New strategy
-            <textarea rows={5} value={draft} onChange={(e) => setDraft(e.target.value)} />
-          </label>
-          <p className="warn">
-            Saving restarts your {RULES.waitingPeriodMs / 86_400_000} day waiting period. You won't be covered until{' '}
-            {date(pool.now + RULES.waitingPeriodMs)}.
-          </p>
-          <div className="row">
-            <button type="submit" className="button" disabled={!draft.trim()}>
-              Save strategy
-            </button>
-            <button type="button" className="link-button" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : (
-        <>
-          <blockquote>{me.strategyText}</blockquote>
-          <button
-            type="button"
-            className="link-button"
-            disabled={hasOpenClaim}
-            title={hasOpenClaim ? "You can't change your strategy while your claim is in voting." : undefined}
-            onClick={() => {
-              setDraft(me.strategyText);
-              setEditing(true);
-            }}
-          >
-            Change strategy
-          </button>
-        </>
-      )}
-
-      <h2>Votes to settle</h2>
-      {unsettled.length === 0 ? (
-        <p className="muted">Nothing to settle.</p>
-      ) : (
-        <ul>
-          {unsettled.map((c) => (
-            <li key={c.id}>
-              <Link to={`/claims/${c.id}`}>Claim #{c.id}</Link>: you voted {VOTE_LABEL[c.ballots[pool.you].vote]}.{' '}
-              <button type="button" className="link-button" onClick={() => pool.settleVote(c.id)}>
-                Settle
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <h2>Strategy</h2>
+      <blockquote>{me.strategyText}</blockquote>
+      <p className="muted">To change your strategy, leave the pool and join again. Coverage restarts after the waiting period.</p>
 
       <h2>My claims</h2>
       {myClaims.length === 0 ? (
@@ -131,7 +63,7 @@ export function Account() {
         <ul>
           {myClaims.map((c) => (
             <li key={c.id}>
-              <Link to={`/claims/${c.id}`}>Claim #{c.id}</Link>: {usd(c.requested)}, {c.status}
+              <Link to={`/claims/${c.id}`}>Claim #{c.id}</Link>: {usd(c.requested)}, {STATUS_LABEL[c.status]}
             </li>
           ))}
         </ul>
@@ -139,11 +71,13 @@ export function Account() {
 
       <h2>Leave the pool</h2>
       <p className="muted">Withdraw your full stake ({usd(me.stake)}) and end your coverage.</p>
-      {leaveBlocker && <p className="warn">{leaveBlocker}</p>}
+      {!canLeave && (
+        <p className="warn">You can leave once no claims are in voting, so nobody can exit to avoid paying a claim.</p>
+      )}
       <button
         type="button"
         className="button button-secondary"
-        disabled={!!leaveBlocker}
+        disabled={!canLeave}
         onClick={() => {
           pool.leave();
           navigate('/');

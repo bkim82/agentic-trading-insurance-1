@@ -6,19 +6,15 @@ export interface Member {
   agent: string;
   strategyText: string;
   strategyHash: string;
-  strategyVersion: number;
-  stake: number; // USD value, excluding voter bonds in escrow
+  stake: number; // USD value
   joinedAt: number;
   coveredFrom: number;
   active: boolean;
-  banned: boolean;
 }
 
 export interface Ballot {
   vote: VoteChoice;
   weight: number;
-  bond: number;
-  settled: boolean;
 }
 
 export interface Claim {
@@ -26,11 +22,9 @@ export interface Claim {
   claimant: string;
   agent: string;
   strategyHash: string;
-  strategyVersion: number;
   revealedStrategy: string;
-  txHashes: string[];
+  txHash: string;
   requested: number;
-  bond: number;
   summary: string;
   lossLines: LossLine[];
   createdAt: number;
@@ -39,11 +33,7 @@ export interface Claim {
   approve: number;
   reject: number;
   fraud: number;
-  payBonds: number;
-  noPayBonds: number;
   totalStakeSnapshot: number;
   payout: number;
-  refileOf: number | null;
-  refiled: boolean;
   ballots: Record<string, Ballot>;
 }

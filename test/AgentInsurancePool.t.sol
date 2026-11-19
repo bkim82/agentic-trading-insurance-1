@@ -32,6 +32,10 @@ contract AgentInsurancePoolTest is Test {
     bytes32 constant TX1 = keccak256("tx1");
     bytes32 constant TX2 = keccak256("tx2");
 
+    AgentInsurancePool.Vote constant APPROVE = AgentInsurancePool.Vote.Approve;
+    AgentInsurancePool.Vote constant REJECT = AgentInsurancePool.Vote.Reject;
+    AgentInsurancePool.Vote constant FRAUD = AgentInsurancePool.Vote.Fraud;
+
     function setUp() public {
         usdc = new MockUSDC();
         pool = new AgentInsurancePool(usdc, 100 * USD);
@@ -54,21 +58,16 @@ contract AgentInsurancePoolTest is Test {
     }
 
     function _join(address member, uint256 amount) internal {
-        usdc.mint(member, amount + 1_000_000 * USD); // extra balance for claim bonds
+        usdc.mint(member, amount);
         vm.startPrank(member);
-        usdc.approve(address(pool), type(uint256).max);
-        pool.join(_agent(member), keccak256("Only trade ETH/USDC, max 5% of portfolio per trade"), "ipfs://strategy", amount);
+        usdc.approve(address(pool), amount);
+        pool.join(_agent(member), keccak256("Only trade ETH/USDC, max 5% per trade"), "ipfs://strategy", amount);
         vm.stopPrank();
     }
 
-    function _hashes(bytes32 h) internal pure returns (bytes32[] memory arr) {
-        arr = new bytes32[](1);
-        arr[0] = h;
-    }
-
-    function _file(address member, bytes32 h, uint256 amount) internal returns (uint256) {
+    function _file(address member, bytes32 txHash, uint256 amount) internal returns (uint256) {
         vm.prank(member);
-        return pool.fileClaim(_hashes(h), amount, "ipfs://evidence");
+        return pool.fileClaim(txHash, amount, "ipfs://evidence");
     }
 
     function _vote(address voter, uint256 id, AgentInsurancePool.Vote v) internal {
@@ -76,8 +75,13 @@ contract AgentInsurancePoolTest is Test {
         pool.vote(id, v);
     }
 
-    function _endVoting() internal {
+    function _endVotingAndResolve(uint256 id) internal {
         vm.warp(block.timestamp + pool.VOTING_PERIOD());
+        pool.resolve(id);
+    }
+
+    function _status(uint256 id) internal view returns (AgentInsurancePool.Status) {
+        return pool.getClaim(id).status;
     }
 
     // ------------------------------------------------------------------
@@ -88,55 +92,33 @@ contract AgentInsurancePoolTest is Test {
         AgentInsurancePool.Member memory m = pool.getMember(alice);
         assertTrue(m.active);
         assertEq(m.agent, _agent(alice));
-        assertEq(m.strategyVersion, 1);
         assertEq(pool.agentOwner(_agent(alice)), alice);
         assertEq(pool.totalAssets(), 200_000 * USD);
-        assertApproxEqAbs(pool.stakeValue(alice), 10_000 * USD, 1);
+        assertEq(pool.stakeValue(alice), 10_000 * USD);
     }
 
     function test_join_revertsForTakenAgent() public {
         usdc.mint(erin, 1_000 * USD);
         vm.startPrank(erin);
-        usdc.approve(address(pool), type(uint256).max);
+        usdc.approve(address(pool), 1_000 * USD);
         vm.expectRevert(AgentInsurancePool.AgentTaken.selector);
         pool.join(_agent(alice), keccak256("x"), "", 1_000 * USD);
         vm.stopPrank();
     }
 
     function test_join_revertsBelowMinStake() public {
-        usdc.mint(erin, 1_000 * USD);
+        usdc.mint(erin, 99 * USD);
         vm.startPrank(erin);
-        usdc.approve(address(pool), type(uint256).max);
+        usdc.approve(address(pool), 99 * USD);
         vm.expectRevert(AgentInsurancePool.StakeTooSmall.selector);
         pool.join(_agent(erin), keccak256("x"), "", 99 * USD);
         vm.stopPrank();
     }
 
-    function test_fileClaim_revertsDuringWaitingPeriod() public {
-        _join(erin, 1_000 * USD);
-        vm.prank(erin);
-        vm.expectRevert(AgentInsurancePool.NotCovered.selector);
-        pool.fileClaim(_hashes(TX1), 100 * USD, "");
-    }
-
-    function test_updateStrategy_restartsWaitingPeriod() public {
-        vm.prank(alice);
-        pool.updateStrategy(keccak256("new strategy"), "ipfs://v2");
-        assertEq(pool.getMember(alice).strategyVersion, 2);
-
-        vm.prank(alice);
-        vm.expectRevert(AgentInsurancePool.NotCovered.selector);
-        pool.fileClaim(_hashes(TX1), 100 * USD, "");
-
-        vm.warp(block.timestamp + pool.WAITING_PERIOD());
-        _file(alice, TX1, 100 * USD);
-    }
-
     function test_leave_returnsStake() public {
-        uint256 before = usdc.balanceOf(dave);
         vm.prank(dave);
         pool.leave();
-        assertApproxEqAbs(usdc.balanceOf(dave) - before, 60_000 * USD, 1);
+        assertEq(usdc.balanceOf(dave), 60_000 * USD);
         assertFalse(pool.getMember(dave).active);
         assertEq(pool.agentOwner(_agent(dave)), address(0));
     }
@@ -148,230 +130,31 @@ contract AgentInsurancePoolTest is Test {
         pool.leave();
     }
 
-    // ------------------------------------------------------------------
-    // Payouts
-    // ------------------------------------------------------------------
-
-    function test_approved_paysEightyPercentAndReturnsBond() public {
-        uint256 before = usdc.balanceOf(alice);
+    function test_joinAfterPayout_getsFairShare() public {
         uint256 id = _file(alice, TX1, 1_000 * USD);
-        assertEq(usdc.balanceOf(alice), before - 100 * USD); // 10% bond
+        _vote(carol, id, APPROVE);
+        _endVotingAndResolve(id); // pool pays 800
 
-        _vote(bob, id, AgentInsurancePool.Vote.Approve);
-        _vote(carol, id, AgentInsurancePool.Vote.Approve);
-        _endVoting();
-        pool.resolve(id);
-
-        AgentInsurancePool.Claim memory c = pool.getClaim(id);
-        assertEq(uint256(c.status), uint256(AgentInsurancePool.Status.Approved));
-        assertEq(c.payout, 800 * USD);
-        assertEq(usdc.balanceOf(alice), before + 800 * USD);
-        assertEq(pool.totalAssets(), 199_200 * USD);
-    }
-
-    function test_payout_cappedAtClaimantStake() public {
-        // Alice (10k stake) claims a 20k loss: 80% = 16k, capped at her ~10k stake.
-        uint256 id = _file(alice, TX1, 20_000 * USD);
-        _vote(bob, id, AgentInsurancePool.Vote.Approve);
-        _vote(dave, id, AgentInsurancePool.Vote.Approve);
-        _endVoting();
-        pool.resolve(id);
-        assertApproxEqAbs(pool.getClaim(id).payout, 10_000 * USD, 1);
-    }
-
-    function test_payout_cappedAtTenPercentOfPool() public {
-        // Carol (100k stake) claims a 50k loss: 80% = 40k, capped at 10% of a 200k pool = 20k.
-        uint256 id = _file(carol, TX1, 50_000 * USD);
-        _vote(bob, id, AgentInsurancePool.Vote.Approve);
-        _vote(dave, id, AgentInsurancePool.Vote.Approve);
-        _endVoting();
-        pool.resolve(id);
-        assertEq(pool.getClaim(id).payout, 20_000 * USD);
-    }
-
-    function test_approvedTx_cannotBeClaimedAgain() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(carol, id, AgentInsurancePool.Vote.Approve);
-        _endVoting();
-        pool.resolve(id);
-
-        assertTrue(pool.isTxLocked(_agent(alice), TX1));
-        vm.prank(alice);
-        vm.expectRevert(AgentInsurancePool.TxHashLocked.selector);
-        pool.fileClaim(_hashes(TX1), 1_000 * USD, "");
+        _join(erin, 10_000 * USD);
+        assertApproxEqAbs(pool.stakeValue(erin), 10_000 * USD, 1);
     }
 
     // ------------------------------------------------------------------
-    // Rejection, refiling, fraud, quorum
+    // Filing
     // ------------------------------------------------------------------
 
-    function test_rejected_forfeitsBondToPool() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(carol, id, AgentInsurancePool.Vote.Reject);
-        _endVoting();
-        pool.resolve(id);
-
-        assertEq(uint256(pool.getClaim(id).status), uint256(AgentInsurancePool.Status.Rejected));
-        assertEq(pool.totalAssets(), 200_100 * USD); // bond added to the pool
-        assertFalse(pool.isTxLocked(_agent(alice), TX1)); // freed for a refile
-    }
-
-    function test_refile_allowedOnce() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(carol, id, AgentInsurancePool.Vote.Reject);
-        _endVoting();
-        pool.resolve(id);
-
-        vm.prank(alice);
-        uint256 id2 = pool.refileClaim(id, 600 * USD, "ipfs://corrected");
-        assertEq(pool.getClaim(id2).refileOf, id);
-        assertEq(pool.getClaim(id2).txHashes[0], TX1);
-
-        vm.prank(alice);
-        vm.expectRevert(AgentInsurancePool.CannotRefile.selector);
-        pool.refileClaim(id, 600 * USD, "");
-
-        _vote(carol, id2, AgentInsurancePool.Vote.Reject);
-        _endVoting();
-        pool.resolve(id2);
-
-        vm.prank(alice);
-        vm.expectRevert(AgentInsurancePool.CannotRefile.selector);
-        pool.refileClaim(id2, 500 * USD, "");
-    }
-
-    function test_fraud_slashesClaimantStake() public {
-        uint256 sharesBefore = pool.totalShares();
-        uint256 aliceShares = pool.getMember(alice).shares;
-        uint256 bobValueBefore = pool.stakeValue(bob);
-
-        uint256 id = _file(alice, TX1, 5_000 * USD);
-        _vote(carol, id, AgentInsurancePool.Vote.Fraud);
-        _vote(dave, id, AgentInsurancePool.Vote.Fraud);
-        _endVoting();
-        pool.resolve(id);
-
-        assertEq(uint256(pool.getClaim(id).status), uint256(AgentInsurancePool.Status.Fraud));
-        assertFalse(pool.getMember(alice).active);
-        assertTrue(pool.banned(alice));
-        assertEq(pool.totalShares(), sharesBefore - aliceShares);
-        assertEq(pool.totalAssets(), 200_500 * USD); // stake stays in pool, plus forfeited bond
-        assertGt(pool.stakeValue(bob), bobValueBefore); // everyone else's stake is worth more
-
-        vm.prank(alice);
-        vm.expectRevert(AgentInsurancePool.Banned.selector);
-        pool.join(_agent(erin), keccak256("x"), "", 1_000 * USD);
-    }
-
-    function test_rejectAndFraudSplit_isRejectedNotFraud() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(bob, id, AgentInsurancePool.Vote.Fraud); // 30k
-        _vote(dave, id, AgentInsurancePool.Vote.Reject); // 60k
-        _endVoting();
-        pool.resolve(id);
-        assertEq(uint256(pool.getClaim(id).status), uint256(AgentInsurancePool.Status.Rejected));
-        assertTrue(pool.getMember(alice).active);
-    }
-
-    function test_noQuorum_refundsBondAndVoterBonds() public {
-        uint256 before = usdc.balanceOf(alice);
-        uint256 bobShares = pool.getMember(bob).shares;
-
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(bob, id, AgentInsurancePool.Vote.Approve); // 30k of 200k = 15% < 20%
-        _endVoting();
-        pool.resolve(id);
-
-        assertEq(uint256(pool.getClaim(id).status), uint256(AgentInsurancePool.Status.NoQuorum));
-        assertEq(usdc.balanceOf(alice), before);
-
-        pool.settleVote(id, bob);
-        assertEq(pool.getMember(bob).shares, bobShares);
-    }
-
-    // ------------------------------------------------------------------
-    // Voting rules and voter bonds
-    // ------------------------------------------------------------------
-
-    function test_voterBonds_winnersTakeLosersBonds() public {
-        uint256 bobShares = pool.getMember(bob).shares;
-        uint256 carolShares = pool.getMember(carol).shares;
-        uint256 bobBond = bobShares / 100;
-
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(bob, id, AgentInsurancePool.Vote.Approve); // loses
-        _vote(carol, id, AgentInsurancePool.Vote.Reject); // wins
-        _endVoting();
-        pool.resolve(id);
-
-        pool.settleVote(id, bob);
-        pool.settleVote(id, carol);
-
-        assertEq(pool.getMember(bob).shares, bobShares - bobBond);
-        assertEq(pool.getMember(carol).shares, carolShares + bobBond);
-
-        vm.expectRevert(AgentInsurancePool.NothingToSettle.selector);
-        pool.settleVote(id, carol);
-    }
-
-    function test_leave_requiresSettledVotes() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(carol, id, AgentInsurancePool.Vote.Approve);
-        _endVoting();
-        pool.resolve(id);
-
-        vm.prank(carol);
-        vm.expectRevert(AgentInsurancePool.UnsettledVotes.selector);
-        pool.leave();
-
-        pool.settleVote(id, carol);
-        vm.prank(carol);
-        pool.leave();
-    }
-
-    function test_vote_revertsForClaimant() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        vm.prank(alice);
-        vm.expectRevert(AgentInsurancePool.CannotVoteOwnClaim.selector);
-        pool.vote(id, AgentInsurancePool.Vote.Approve);
-    }
-
-    function test_vote_revertsIfJoinedAfterClaim() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        vm.warp(block.timestamp + 1);
-        _join(erin, 1_000_000 * USD);
+    function test_fileClaim_revertsDuringWaitingPeriod() public {
+        _join(erin, 1_000 * USD);
         vm.prank(erin);
-        vm.expectRevert(AgentInsurancePool.JoinedAfterClaim.selector);
-        pool.vote(id, AgentInsurancePool.Vote.Approve);
+        vm.expectRevert(AgentInsurancePool.NotCovered.selector);
+        pool.fileClaim(TX1, 100 * USD, "");
     }
 
-    function test_vote_revertsOnDoubleVote() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _vote(bob, id, AgentInsurancePool.Vote.Approve);
-        vm.prank(bob);
-        vm.expectRevert(AgentInsurancePool.AlreadyVoted.selector);
-        pool.vote(id, AgentInsurancePool.Vote.Reject);
-    }
-
-    function test_vote_revertsAfterVotingEnds() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        _endVoting();
-        vm.prank(bob);
-        vm.expectRevert(AgentInsurancePool.VotingClosed.selector);
-        pool.vote(id, AgentInsurancePool.Vote.Approve);
-    }
-
-    function test_resolve_revertsBeforeVotingEnds() public {
-        uint256 id = _file(alice, TX1, 1_000 * USD);
-        vm.expectRevert(AgentInsurancePool.VotingNotOver.selector);
-        pool.resolve(id);
-    }
-
-    function test_oneOpenClaimPerMember() public {
+    function test_fileClaim_oneOpenClaimPerMember() public {
         _file(alice, TX1, 1_000 * USD);
         vm.prank(alice);
         vm.expectRevert(AgentInsurancePool.HasOpenClaim.selector);
-        pool.fileClaim(_hashes(TX2), 1_000 * USD, "");
+        pool.fileClaim(TX2, 1_000 * USD, "");
     }
 
     function test_txLock_isPerAgent() public {
@@ -381,17 +164,187 @@ contract AgentInsurancePoolTest is Test {
     }
 
     // ------------------------------------------------------------------
-    // Invariant-style fuzz: pool assets always cover what members can withdraw
+    // Payouts
+    // ------------------------------------------------------------------
+
+    function test_approved_paysEightyPercent() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(bob, id, APPROVE);
+        _vote(carol, id, APPROVE);
+        _endVotingAndResolve(id);
+
+        assertEq(uint256(_status(id)), uint256(AgentInsurancePool.Status.Approved));
+        assertEq(pool.getClaim(id).payout, 800 * USD);
+        assertEq(usdc.balanceOf(alice), 800 * USD);
+        assertEq(pool.totalAssets(), 199_200 * USD);
+    }
+
+    function test_payout_cappedAtClaimantStake() public {
+        // Alice (10k) claims 20k: 80% = 16k, capped at her 10k stake.
+        uint256 id = _file(alice, TX1, 20_000 * USD);
+        _vote(bob, id, APPROVE);
+        _vote(dave, id, APPROVE);
+        _endVotingAndResolve(id);
+        assertEq(pool.getClaim(id).payout, 10_000 * USD);
+    }
+
+    function test_payout_cappedAtTenPercentOfPool() public {
+        // Carol (100k) claims 50k: 80% = 40k, capped at 10% of 200k = 20k.
+        uint256 id = _file(carol, TX1, 50_000 * USD);
+        _vote(bob, id, APPROVE);
+        _vote(dave, id, APPROVE);
+        _endVotingAndResolve(id);
+        assertEq(pool.getClaim(id).payout, 20_000 * USD);
+    }
+
+    function test_approvedTx_cannotBeClaimedAgain() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(carol, id, APPROVE);
+        _endVotingAndResolve(id);
+
+        vm.prank(alice);
+        vm.expectRevert(AgentInsurancePool.TxAlreadyClaimed.selector);
+        pool.fileClaim(TX1, 1_000 * USD, "");
+    }
+
+    // ------------------------------------------------------------------
+    // Rejection, fraud, quorum
+    // ------------------------------------------------------------------
+
+    function test_rejected_txCanBeClaimedAgain() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(carol, id, REJECT);
+        _endVotingAndResolve(id);
+
+        assertEq(uint256(_status(id)), uint256(AgentInsurancePool.Status.Rejected));
+        assertEq(pool.totalAssets(), 200_000 * USD);
+        _file(alice, TX1, 900 * USD);
+    }
+
+    function test_fraud_slashesClaimantStake() public {
+        uint256 aliceShares = pool.getMember(alice).shares;
+        uint256 sharesBefore = pool.totalShares();
+
+        uint256 id = _file(alice, TX1, 5_000 * USD);
+        _vote(carol, id, FRAUD);
+        _vote(dave, id, FRAUD);
+        _endVotingAndResolve(id);
+
+        assertEq(uint256(_status(id)), uint256(AgentInsurancePool.Status.Fraud));
+        assertFalse(pool.getMember(alice).active);
+        assertEq(pool.totalShares(), sharesBefore - aliceShares);
+        assertEq(pool.totalAssets(), 200_000 * USD); // her 10k stays in the pool
+        // Bob didn't vote, so his stake just grows with the pool: 30k * 200k / 190k.
+        assertApproxEqAbs(pool.stakeValue(bob), (30_000 * USD * 200) / 190, 1);
+    }
+
+    function test_rejectAndFraudSplit_isRejected() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(bob, id, FRAUD); // 30k
+        _vote(dave, id, REJECT); // 60k
+        _endVotingAndResolve(id);
+        assertEq(uint256(_status(id)), uint256(AgentInsurancePool.Status.Rejected));
+        assertTrue(pool.getMember(alice).active);
+    }
+
+    function test_noQuorum_noPenalties() public {
+        uint256 bobShares = pool.getMember(bob).shares;
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(bob, id, APPROVE); // 30k of 200k = 15% < 20%
+        _endVotingAndResolve(id);
+
+        assertEq(uint256(_status(id)), uint256(AgentInsurancePool.Status.NoQuorum));
+        assertEq(pool.getMember(bob).shares, bobShares);
+        assertFalse(pool.isTxLocked(_agent(alice), TX1));
+    }
+
+    // ------------------------------------------------------------------
+    // Voting rules and voter penalties
+    // ------------------------------------------------------------------
+
+    function test_losingVoters_payWinners() public {
+        uint256 bobShares = pool.getMember(bob).shares;
+        uint256 carolShares = pool.getMember(carol).shares;
+        uint256 daveShares = pool.getMember(dave).shares;
+        uint256 totalBefore = pool.totalShares();
+
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(bob, id, APPROVE); // loses: 1% of 30k = 300
+        _vote(carol, id, REJECT); // wins, weight 100k
+        _vote(dave, id, FRAUD); // wins (same "don't pay" side), weight 60k
+        _endVotingAndResolve(id);
+
+        uint256 penalty = bobShares / 100;
+        assertEq(pool.getMember(bob).shares, bobShares - penalty);
+        assertEq(pool.getMember(carol).shares, carolShares + (penalty * 100) / 160);
+        assertEq(pool.getMember(dave).shares, daveShares + (penalty * 60) / 160);
+        assertApproxEqAbs(pool.totalShares(), totalBefore, 1);
+    }
+
+    function test_vote_revertsForClaimant() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        vm.prank(alice);
+        vm.expectRevert(AgentInsurancePool.CannotVoteOwnClaim.selector);
+        pool.vote(id, APPROVE);
+    }
+
+    function test_vote_revertsIfJoinedAfterClaim() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        vm.warp(block.timestamp + 1);
+        _join(erin, 1_000_000 * USD);
+        vm.prank(erin);
+        vm.expectRevert(AgentInsurancePool.JoinedAfterClaim.selector);
+        pool.vote(id, APPROVE);
+    }
+
+    function test_vote_revertsOnDoubleVote() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        _vote(bob, id, APPROVE);
+        vm.prank(bob);
+        vm.expectRevert(AgentInsurancePool.AlreadyVoted.selector);
+        pool.vote(id, REJECT);
+    }
+
+    function test_vote_revertsAfterVotingEnds() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        vm.warp(block.timestamp + pool.VOTING_PERIOD());
+        vm.prank(bob);
+        vm.expectRevert(AgentInsurancePool.VotingClosed.selector);
+        pool.vote(id, APPROVE);
+    }
+
+    function test_resolve_revertsBeforeVotingEnds() public {
+        uint256 id = _file(alice, TX1, 1_000 * USD);
+        vm.expectRevert(AgentInsurancePool.VotingNotOver.selector);
+        pool.resolve(id);
+    }
+
+    function test_slashedVoter_isSkippedInOtherClaims() public {
+        // Alice votes on Bob's claim, then gets slashed for fraud on her own claim first.
+        uint256 bobClaim = _file(bob, TX2, 1_000 * USD);
+        _vote(alice, bobClaim, REJECT);
+        _vote(carol, bobClaim, APPROVE);
+
+        uint256 aliceClaim = _file(alice, TX1, 5_000 * USD);
+        _vote(carol, aliceClaim, FRAUD);
+        _vote(dave, aliceClaim, FRAUD);
+        vm.warp(block.timestamp + pool.VOTING_PERIOD());
+        pool.resolve(aliceClaim);
+        pool.resolve(bobClaim); // must not revert on Alice's deleted membership
+        assertEq(uint256(_status(bobClaim)), uint256(AgentInsurancePool.Status.Approved));
+    }
+
+    // ------------------------------------------------------------------
+    // Fuzz
     // ------------------------------------------------------------------
 
     function testFuzz_payoutNeverExceedsCaps(uint256 requested) public {
-        requested = bound(requested, 10, 1_000_000 * USD);
+        requested = bound(requested, 1, 1_000_000 * USD);
         uint256 id = _file(bob, TX1, requested);
-        _vote(carol, id, AgentInsurancePool.Vote.Approve);
-        _endVoting();
+        _vote(carol, id, APPROVE);
         uint256 poolBefore = pool.totalAssets();
         uint256 bobValue = pool.stakeValue(bob);
-        pool.resolve(id);
+        _endVotingAndResolve(id);
 
         uint256 payout = pool.getClaim(id).payout;
         assertLe(payout, (requested * 8_000) / 10_000);

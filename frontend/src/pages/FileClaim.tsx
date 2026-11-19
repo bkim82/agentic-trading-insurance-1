@@ -19,7 +19,7 @@ let nextLineId = 3;
 export function FileClaim() {
   const pool = usePool();
   const navigate = useNavigate();
-  const [txText, setTxText] = useState('');
+  const [txHash, setTxHash] = useState('');
   const [summary, setSummary] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([
     { id: 1, direction: 'out', token: 'ETH', amount: '', priceUsd: '' },
@@ -60,17 +60,7 @@ export function FileClaim() {
     );
   }
 
-  const txHashes = txText
-    .split(/\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const badHashes = txHashes.filter((h) => !TX_HASH.test(h));
-  const txError =
-    txHashes.length > RULES.maxTxHashes
-      ? `Up to ${RULES.maxTxHashes} transactions per claim.`
-      : badHashes.length > 0
-        ? `Not a valid transaction hash: ${badHashes[0]}`
-        : null;
+  const txError = txHash && !TX_HASH.test(txHash) ? 'Not a valid transaction hash.' : null;
 
   const lossLines: LossLine[] = lines
     .filter((l) => l.token && l.amount !== '')
@@ -81,9 +71,8 @@ export function FileClaim() {
       priceUsd: Number(l.priceUsd || 0),
     }));
   const loss = lossFromLines(lossLines);
-  const bond = loss * RULES.claimBondPct;
   const preview = payoutFor(loss, me.stake, pool.poolAssets);
-  const canSubmit = txHashes.length > 0 && !txError && loss > 0 && summary.trim().length > 0;
+  const canSubmit = txHash !== '' && !txError && loss > 0 && summary.trim().length > 0;
 
   function updateLine(id: number, patch: Partial<LineDraft>) {
     setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
@@ -104,29 +93,28 @@ export function FileClaim() {
         className="stack wide"
         onSubmit={(e) => {
           e.preventDefault();
-          const id = pool.fileClaim({ txHashes, summary, lossLines, requested: loss });
+          const id = pool.fileClaim({ txHash, summary, lossLines, requested: loss });
           navigate(`/claims/${id}`);
         }}
       >
         <h2>1. Your committed strategy</h2>
         <blockquote>{me.strategyText}</blockquote>
         <p className="muted">
-          Version {me.strategyVersion}. This text is shown to voters and checked against your on-chain fingerprint.
+          This text is shown to voters and checked against your on-chain fingerprint.
         </p>
 
-        <h2>2. The transactions</h2>
+        <h2>2. The transaction</h2>
         <label>
-          Transaction hashes, one per line (up to {RULES.maxTxHashes})
-          <textarea
-            rows={3}
+          Transaction hash
+          <input
             className="mono"
             placeholder="0x…"
-            value={txText}
-            onChange={(e) => setTxText(e.target.value)}
+            value={txHash}
+            onChange={(e) => setTxHash(e.target.value.trim())}
           />
         </label>
         {txError && <p className="warn">{txError}</p>}
-        <p className="muted">They must be sent from your agent: {me.agent}</p>
+        <p className="muted">It must be sent from your agent: {me.agent}</p>
 
         <h2>3. Why it breaks the strategy</h2>
         <label>
@@ -227,8 +215,6 @@ export function FileClaim() {
         <dl className="kv">
           <dt>Requested amount</dt>
           <dd>{usd(loss)}</dd>
-          <dt>Bond you post now ({pct(RULES.claimBondPct)})</dt>
-          <dd>{usd(bond)}</dd>
           <dt>Payout if approved</dt>
           <dd>
             {usd(preview.payout)}{' '}
@@ -244,11 +230,10 @@ export function FileClaim() {
           </dd>
         </dl>
         <p className="muted">
-          The bond comes back if the claim is approved or doesn't reach quorum. If it's rejected, the bond goes to the
-          pool. If voters find fraud, you lose your whole stake.
+          Filing is free. If voters find fraud, you lose your whole stake.
         </p>
         <button type="submit" className="button" disabled={!canSubmit}>
-          File claim and post {usd(bond)} bond
+          File claim
         </button>
       </form>
     </>
