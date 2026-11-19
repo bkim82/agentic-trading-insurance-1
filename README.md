@@ -10,14 +10,14 @@ Contract: `src/AgentInsurancePool.sol`
 1. **Join.** Call `join(agent, strategyHash, strategyURI, amount)`. `strategyHash` is the keccak256 of your
    full strategy text; `strategyURI` points to it (an IPFS link, or the plain text if you don't mind it
    being public). Your stake is held in the pool token (e.g. USDC). To change your strategy, leave and rejoin.
-2. **Wait.** Coverage starts 7 days after joining.
+2. **Wait.** Coverage starts after a waiting period (7 days in production).
 3. **File a claim.** Call `fileClaim(txHash, requestedAmount, evidenceURI)`. Filing is free.
    - `requestedAmount` is the loss: the value of what left the wallet minus the value of what came back,
      both priced at the block of the trade. Later price moves don't count. Tokens with no market price
      count as zero.
    - `evidenceURI` should show the strategy text (matching `strategyHash`), why the trade breaks it,
      that the transaction came from your registered agent, and the loss math with price sources.
-4. **Vote (3 days).** Members who joined before the claim vote `Approve`, `Reject`, or `Fraud`, weighted by
+4. **Vote (3 days in production).** Members who joined before the claim vote `Approve`, `Reject`, or `Fraud`, weighted by
    stake. The claimant can't vote.
 5. **Resolve.** Anyone calls `resolve(claimId)` after voting ends.
    - Less than 20% of total stake voted: **NoQuorum**. Nothing happens; the claim can be filed again.
@@ -39,8 +39,8 @@ to their stake.
 
 | Setting | Value |
 |---|---|
-| Waiting period | 7 days |
-| Voting period | 3 days |
+| Waiting period | set at deploy (7 days in production, 2 minutes in the demo) |
+| Voting period | set at deploy (3 days in production, 5 minutes in the demo) |
 | Quorum | 20% of total stake |
 | Losing-voter penalty | 1% of stake, paid to winning voters |
 | Coverage | 80% of loss (20% deductible) |
@@ -53,7 +53,7 @@ to their stake.
   came from the registered agent, happened after coverage started, and that the loss math is right.
 - Resolving loops over every voter, so gas grows with the number of voters. Fine for a small pool.
 - Vote weight is the voter's stake when they vote.
-- Any open claim blocks everyone from leaving. Each claim ends within 3 days, but someone could keep
+- Any open claim blocks everyone from leaving. Each claim ends after one voting period, but someone could keep
   filing claims to hold the exit closed.
 - No restriction on which venues are covered, and no cap on total payouts per period.
 - Unaudited. Pooled loss coverage can count as regulated insurance; get legal review before real use.
@@ -63,20 +63,54 @@ to their stake.
 ```shell
 forge build
 forge test
-TOKEN=<erc20> MIN_STAKE=100000000 forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast --account <keystore>
+TOKEN=<erc20> MIN_STAKE=100000000 WAITING_PERIOD=604800 VOTING_PERIOD=259200 \
+  forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast --account <keystore>
 ```
+
+`WAITING_PERIOD` and `VOTING_PERIOD` are in seconds and default to 7 days and 3 days.
+
+## Live demo deployment (Base Sepolia)
+
+| | |
+|---|---|
+| Contract | [`0xCB690ec336F47CEeb9d7dDFca7D6ca07cf6edC77`](https://sepolia.basescan.org/address/0xCB690ec336F47CEeb9d7dDFca7D6ca07cf6edC77) (source verified) |
+| Token | Base Sepolia USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| Minimum stake | 0.10 USDC |
+| Waiting / voting period | 2 minutes / 5 minutes |
+| Deployed by | CDP server wallet `neo-agent` (`0x7e0c…E683`) via the CREATE2 deployer |
+
+Full details are in `deployments/base-sepolia.json`. The deployment was sent with the CDP CLI: the init code
+was wrapped in an unsigned EIP-1559 transaction to the CREATE2 deployer
+(`0x4e59b44847b379578588920cA78FbF26c0B4956C`, salt `keccak256("agent-insurance-pool-demo-v1")`) and submitted with
+`cdp evm accounts send transaction`, which signs, sets gas and nonce, and broadcasts.
 
 ## Frontend
 
-A clickable template lives in `frontend/` (React + Vite). It runs on sample data and isn't connected to the
-contract yet. Every action goes through `frontend/src/state/PoolContext.tsx`, which mirrors the contract's
-functions one to one, and the payout and voting math lives in `frontend/src/lib/rules.ts`. To wire it up,
-replace those function bodies with contract calls (viem is already installed).
+`frontend/` (React + Vite + wagmi/viem) talks to the live contract above. Members connect a browser wallet
+(Coinbase Wallet extension, MetaMask, or any injected wallet) and every action is a real Base Sepolia
+transaction: joining (USDC approve, then `join`), filing a claim, voting, resolving, and leaving. The page
+refreshes from the chain every 15 seconds.
+
+The Vite dev server also runs two small endpoints that use the CDP API, so the API key stays on the server:
+
+- `POST /api/faucet` sends test USDC and ETH to the connected wallet via the CDP SDK (`requestFaucet`).
+  It's the "Get test funds" button in the header.
+- `GET /api/members` lists every `Joined` event through the CDP SQL API (`base_sepolia.events`). The public
+  RPC only allows 200-block log queries, which is too small to scan the pool's history from the browser.
+
+Setup:
 
 ```shell
 cd frontend
 npm install
+cat > .env.local <<'ENV'
+CDP_API_KEY_ID=<your CDP API key id>
+CDP_API_KEY_SECRET="<your CDP API key secret>"
+ENV
 npm run dev
 ```
 
-Use "Skip ahead 3 days" in the footer to end a vote and try resolving and settling claims.
+`.env.local` is git-ignored. Optional: set `VITE_RPC_URL` to use a different Base Sepolia RPC.
+
+Claim evidence (a summary and the loss lines) is stored on-chain as JSON in the claim's `evidenceURI`. The
+committed strategy text is stored as the member's `strategyURI`, and its keccak256 hash is the commitment.

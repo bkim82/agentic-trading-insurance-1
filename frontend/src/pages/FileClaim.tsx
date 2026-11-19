@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { lossFromLines, payoutFor, RULES, type LossLine } from '../lib/rules';
-import { date, pct, usd } from '../lib/format';
+import { date, duration, pct, timeLeft, usd } from '../lib/format';
 
 interface LineDraft {
   id: number;
@@ -42,7 +42,10 @@ export function FileClaim() {
     return (
       <>
         <h1>File a claim</h1>
-        <p>Your coverage starts on {date(me.coveredFrom)}. You can file claims for losses after that date.</p>
+        <p>
+          Your coverage starts {date(me.coveredFrom)} ({timeLeft(me.coveredFrom, pool.now)}). You can file claims for losses
+          after that.
+        </p>
       </>
     );
   }
@@ -86,15 +89,16 @@ export function FileClaim() {
       <h1>File a claim</h1>
       <p className="lede">
         Show the pool that your agent broke your committed strategy, and how much it cost you. Members will vote for{' '}
-        {RULES.votingPeriodMs / 86_400_000} days.
+        {duration(pool.params.votingPeriodMs)}.
       </p>
 
       <form
         className="stack wide"
         onSubmit={(e) => {
           e.preventDefault();
-          const id = pool.fileClaim({ txHash, summary, lossLines, requested: loss });
-          navigate(`/claims/${id}`);
+          void pool.fileClaim({ txHash, summary, lossLines, requested: loss }).then((id) => {
+            if (id !== null) navigate(`/claims/${id}`);
+          });
         }}
       >
         <h2>1. Your committed strategy</h2>
@@ -232,7 +236,7 @@ export function FileClaim() {
         <p className="muted">
           Filing is free. If voters find fraud, you lose your whole stake.
         </p>
-        <button type="submit" className="button" disabled={!canSubmit}>
+        <button type="submit" className="button" disabled={!canSubmit || !!pool.busy}>
           File claim
         </button>
       </form>

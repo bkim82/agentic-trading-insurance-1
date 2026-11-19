@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AgentInsurancePool} from "../src/AgentInsurancePool.sol";
 
 /// Usage:
-///   TOKEN=<erc20 address> MIN_STAKE=100000000 \
+///   TOKEN=<erc20 address> MIN_STAKE=100000000 WAITING_PERIOD=604800 VOTING_PERIOD=259200 \
 ///   forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast --account <keystore-name>
 ///
 /// MIN_STAKE is in token base units (100000000 = 100 USDC with 6 decimals).
@@ -14,9 +14,11 @@ contract Deploy is Script {
     function run() external returns (AgentInsurancePool pool) {
         address token = vm.envAddress("TOKEN");
         uint256 minStake = vm.envOr("MIN_STAKE", uint256(100e6));
+        uint256 waitingPeriod = vm.envOr("WAITING_PERIOD", uint256(7 days));
+        uint256 votingPeriod = vm.envOr("VOTING_PERIOD", uint256(3 days));
 
         vm.startBroadcast();
-        pool = new AgentInsurancePool(IERC20(token), minStake);
+        pool = new AgentInsurancePool(IERC20(token), minStake, waitingPeriod, votingPeriod);
         vm.stopBroadcast();
 
         console.log("AgentInsurancePool deployed at", address(pool));

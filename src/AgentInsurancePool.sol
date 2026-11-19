@@ -11,10 +11,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 ///         trading strategy the member committed to when joining.
 ///
 /// - Join with a stake, your agent's address, and a commitment to your strategy.
-///   Coverage starts after a 7 day waiting period.
+///   Coverage starts after a waiting period (7 days in production).
 /// - File a claim with the offending transaction hash, the loss, and an evidence link.
 ///   Loss = value out minus value in, priced at the trade's block (computed off-chain, checked by voters).
-/// - Members vote Approve / Reject / Fraud for 3 days, weighted by stake.
+/// - Members vote Approve / Reject / Fraud during the voting period (3 days in production), weighted by stake.
 /// - At least 20% of total stake must vote. Approve or Fraud needs more than half the votes cast.
 ///   Fraud slashes the claimant's whole stake into the pool.
 /// - Voters on the losing side (pay vs. don't pay) lose 1% of their stake to the winning side.
@@ -25,8 +25,6 @@ contract AgentInsurancePool is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS = 10_000;
-    uint256 public constant WAITING_PERIOD = 7 days;
-    uint256 public constant VOTING_PERIOD = 3 days;
     uint256 public constant QUORUM_BPS = 2_000; // 20% of total stake must vote
     uint256 public constant VOTER_PENALTY_BPS = 100; // losing voters lose 1% of stake
     uint256 public constant COVERAGE_BPS = 8_000; // pays 80% of the loss
@@ -78,6 +76,10 @@ contract AgentInsurancePool is ReentrancyGuard {
 
     IERC20 public immutable token;
     uint256 public immutable minStake;
+    /// @notice Time after joining before a member can file a claim (7 days in production).
+    uint256 public immutable WAITING_PERIOD;
+    /// @notice How long each claim is open for voting (3 days in production).
+    uint256 public immutable VOTING_PERIOD;
 
     uint256 public totalShares;
     uint256 public claimCount;
@@ -116,10 +118,14 @@ contract AgentInsurancePool is ReentrancyGuard {
     error JoinedAfterClaim();
     error AlreadyVoted();
 
-    constructor(IERC20 token_, uint256 minStake_) {
+    /// @param waitingPeriod_ Seconds before a new member is covered (production: 7 days).
+    /// @param votingPeriod_ Seconds each claim is open for voting (production: 3 days).
+    constructor(IERC20 token_, uint256 minStake_, uint256 waitingPeriod_, uint256 votingPeriod_) {
         if (address(token_) == address(0)) revert ZeroAddress();
         token = token_;
         minStake = minStake_;
+        WAITING_PERIOD = waitingPeriod_;
+        VOTING_PERIOD = votingPeriod_;
     }
 
     // ------------------------------------------------------------------

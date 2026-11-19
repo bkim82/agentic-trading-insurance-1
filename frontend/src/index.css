@@ -471,3 +471,26 @@ select:focus {
     gap: 12px 24px;
   }
 }
+
+.wallet-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.banner {
+  margin: -16px 0 24px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--soft);
+  font-size: 0.95rem;
+}
+.banner-warn {
+  border-color: #e9c46a;
+  background: #fff8e6;
+}
+.banner-error {
+  border-color: #f0b4ae;
+  background: #fff1f0;
+  color: var(--fraud);
+}

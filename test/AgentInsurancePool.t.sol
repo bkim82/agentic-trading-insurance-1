@@ -38,7 +38,7 @@ contract AgentInsurancePoolTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        pool = new AgentInsurancePool(usdc, 100 * USD);
+        pool = new AgentInsurancePool(usdc, 100 * USD, 7 days, 3 days);
 
         // Total pool: 200k. Alice 10k, Bob 30k, Carol 100k, Dave 60k.
         _join(alice, 10_000 * USD);

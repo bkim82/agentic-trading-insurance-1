@@ -1,16 +1,13 @@
 // Mirrors the constants and math in src/AgentInsurancePool.sol.
-// When the frontend is wired to the contract, read these from the contract instead.
+// The waiting period, voting period, and minimum stake are set per deployment and read from the contract.
 
 export const DAY = 24 * 60 * 60 * 1000;
 
 export const RULES = {
-  waitingPeriodMs: 7 * DAY,
-  votingPeriodMs: 3 * DAY,
   voterPenaltyPct: 0.01, // losing voters lose 1% of their stake to the winners
   quorumPct: 0.2, // 20% of total stake must vote
   coveragePct: 0.8, // pays 80% of the loss
   maxPoolPayoutPct: 0.1, // a claim pays at most 10% of the pool
-  minStake: 100,
 } as const;
 
 export type VoteChoice = 'approve' | 'reject' | 'fraud';

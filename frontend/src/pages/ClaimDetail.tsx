@@ -5,6 +5,7 @@ import { StatusBadge, TallyBar } from '../components/ClaimBits';
 import { lossFromLines, outcomeFor, payoutFor, RULES, type VoteChoice } from '../lib/rules';
 import { date, pct, price, shortAddr, STATUS_LABEL, strategyHash, timeLeft, usd, VOTE_LABEL } from '../lib/format';
 import type { Claim } from '../lib/types';
+import { EXPLORER } from '../lib/chain';
 
 const VOTE_HELP: Record<VoteChoice, string> = {
   approve: 'The trade broke the committed strategy and the loss math is right.',
@@ -71,7 +72,7 @@ function ClaimDetailBody({ id }: { id: number }) {
 
           <h3>Transaction</h3>
           <p className="mono">
-            <a href={`https://basescan.org/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
+            <a href={`${EXPLORER}/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
               {shortAddr(claim.txHash)}
             </a>
           </p>
@@ -148,14 +149,22 @@ function ClaimDetailBody({ id }: { id: number }) {
               claim={claim}
               choice={choice}
               onChoose={setChoice}
-              onSubmit={() => choice && pool.vote(claim.id, choice)}
+              onSubmit={() => {
+                if (choice) void pool.vote(claim.id, choice);
+              }}
             />
           )}
 
           {canResolve && (
             <>
               <p>Voting has ended.</p>
-              <button type="button" className="button" onClick={() => pool.resolve(claim.id)}>
+              <p className="muted small">Anyone can do this. It applies the outcome on-chain.</p>
+              <button
+                type="button"
+                className="button"
+                disabled={!!pool.busy}
+                onClick={() => void pool.resolve(claim.id)}
+              >
                 Close voting and resolve
               </button>
             </>
@@ -202,7 +211,7 @@ function VotePanel({
   onChoose: (c: VoteChoice) => void;
   onSubmit: () => void;
 }) {
-  const { me, you } = usePool();
+  const { me, you, busy } = usePool();
   const ballot = claim.ballots[you];
 
   if (!me) {
@@ -249,7 +258,7 @@ function VotePanel({
         Your vote counts with {usd(me.stake)} of stake. If you end up on the losing side (pay vs. don't pay), you lose{' '}
         {usd(me.stake * RULES.voterPenaltyPct)} ({pct(RULES.voterPenaltyPct)}) to the voters who got it right.
       </p>
-      <button type="submit" className="button" disabled={!choice}>
+      <button type="submit" className="button" disabled={!choice || !!busy}>
         Submit vote
       </button>
     </form>

@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { isAddress } from 'viem';
 import { usePool } from '../state/PoolContext';
-import { RULES } from '../lib/rules';
-import { date, strategyHash, usd } from '../lib/format';
+import { date, duration, strategyHash, usd } from '../lib/format';
 
 export function Join() {
   const pool = usePool();
@@ -23,13 +22,30 @@ export function Join() {
     );
   }
 
+  if (!pool.isConnected) {
+    return (
+      <>
+        <h1>Join the pool</h1>
+        <p>Connect your browser wallet to join.</p>
+        <button type="button" className="button" onClick={() => void pool.connect()}>
+          Connect wallet
+        </button>
+      </>
+    );
+  }
 
+  const { minStake, waitingPeriodMs } = pool.params;
   const stake = Number(amount || 0);
   const agentTaken = pool.members.some((m) => m.active && m.agent.toLowerCase() === agent.toLowerCase());
   const agentError = agent && !isAddress(agent) ? 'Not a valid address.' : agentTaken ? 'This agent is already registered.' : null;
-  const stakeError = amount && stake < RULES.minStake ? `Minimum stake is ${usd(RULES.minStake)}.` : null;
-  const canSubmit = agent && !agentError && strategy.trim() && stake >= RULES.minStake;
-  const coverageStarts = pool.now + RULES.waitingPeriodMs;
+  const stakeError =
+    amount && stake < minStake
+      ? `Minimum stake is ${usd(minStake)}.`
+      : stake > pool.usdcBalance
+        ? `You have ${usd(pool.usdcBalance)} USDC. Use "Get test funds" at the top to get more.`
+        : null;
+  const canSubmit = agent && !agentError && strategy.trim() && stake >= minStake && !stakeError && !pool.busy;
+  const coverageStarts = pool.now + waitingPeriodMs;
 
   return (
     <>
@@ -43,8 +59,7 @@ export function Join() {
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          pool.join(agent, strategy.trim(), stake);
-          navigate('/account');
+          void pool.join(agent, strategy.trim(), stake).then((ok) => ok && navigate('/account'));
         }}
       >
         <label>
@@ -72,14 +87,15 @@ export function Join() {
 
         <label>
           Stake (USDC)
-          <input type="number" min={RULES.minStake} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input type="number" min={minStake} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
           <span className="hint">Your stake also caps what a single claim can pay you.</span>
         </label>
         {stakeError && <p className="warn">{stakeError}</p>}
 
         <p className="muted">
-          Coverage starts {date(coverageStarts)}, after a {RULES.waitingPeriodMs / 86_400_000} day wait. To change your
-          strategy later, you leave and rejoin, which restarts the wait.
+          Coverage starts around {date(coverageStarts)} ({duration(waitingPeriodMs)} from now). To change your
+          strategy later, you leave and rejoin, which restarts the wait. Joining takes two wallet confirmations: one to
+          allow the pool to take your USDC, and one to join.
         </p>
 
         <button type="submit" className="button" disabled={!canSubmit}>

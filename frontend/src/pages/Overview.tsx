@@ -1,10 +1,10 @@
 import { Link } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { RULES } from '../lib/rules';
-import { pct, usd } from '../lib/format';
+import { duration, pct, usd } from '../lib/format';
 
 export function Overview() {
-  const { members, claims, poolAssets, me, openClaimCount } = usePool();
+  const { members, claims, poolAssets, me, openClaimCount, params } = usePool();
   const active = members.filter((m) => m.active);
   const paid = claims.filter((c) => c.status === 'approved').reduce((s, c) => s + c.payout, 0);
 
@@ -51,15 +51,15 @@ export function Overview() {
       <h2>How it works</h2>
       <ol className="steps">
         <li>
-          <strong>Join.</strong> Stake at least {usd(RULES.minStake)}, register your agent's address, and commit to your
-          strategy. Coverage starts after a {RULES.waitingPeriodMs / 86_400_000} day wait.
+          <strong>Join.</strong> Stake at least {usd(params.minStake)}, register your agent's address, and commit to your
+          strategy. Coverage starts {duration(params.waitingPeriodMs)} after you join.
         </li>
         <li>
           <strong>File a claim.</strong> Point to the transaction where your agent broke the strategy and state the loss:
           what left the wallet minus what came back, priced at that moment.
         </li>
         <li>
-          <strong>Members vote</strong> for {RULES.votingPeriodMs / 86_400_000} days: approve, reject, or fraud. Voters on
+          <strong>Members vote</strong> for {duration(params.votingPeriodMs)}: approve, reject, or fraud. Voters on
           the losing side lose {pct(RULES.voterPenaltyPct)} of their stake to the voters who got it right.
         </li>
         <li>

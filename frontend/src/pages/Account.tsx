@@ -77,10 +77,9 @@ export function Account() {
       <button
         type="button"
         className="button button-secondary"
-        disabled={!canLeave}
+        disabled={!canLeave || !!pool.busy}
         onClick={() => {
-          pool.leave();
-          navigate('/');
+          void pool.leave().then((ok) => ok && navigate('/'));
         }}
       >
         Leave and withdraw

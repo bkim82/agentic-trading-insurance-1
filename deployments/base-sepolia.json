@@ -1,0 +1,13 @@
+{
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "AgentInsurancePool": "0xCB690ec336F47CEeb9d7dDFca7D6ca07cf6edC77",
+  "deployBlock": 60900617,
+  "deployTx": "0xef9fb408c500d83beeaa5afa48a3ae4167775cd47d8473dc502c04e8067c60e5",
+  "deployer": "0x7e0cD33763815Dd586c676b7A176eb32E5b5E683",
+  "deployedVia": "CDP server wallet (neo-agent) through the CREATE2 deployer 0x4e59b44847b379578588920cA78FbF26c0B4956C",
+  "token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "minStake": "100000",
+  "waitingPeriodSeconds": 120,
+  "votingPeriodSeconds": 300
+}
