@@ -2,16 +2,34 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { EXPLORER, POOL_ADDRESS } from '../lib/chain';
 import { shortAddr, usd } from '../lib/format';
+import { TxToast } from './TxToast';
+import { DemoBanner } from './DemoBanner';
+import { useDemoMode } from '../state/DemoMode';
 
 export function Layout() {
   const pool = usePool();
-  const { you, me, isConnected, wrongNetwork, busy, error, lastTx } = pool;
+  const demoMode = useDemoMode();
+  const { you, me, isConnected, wrongNetwork, busy, error } = pool;
 
   return (
     <div className="page">
       <header className="site-header">
         <NavLink to="/" className="brand">
-          Agent Insurance Pool
+          <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="16" cy="16" r="16" fill="#0052FF" />
+            <path d="M16 7.5 23 10v5.6c0 4.3-2.9 7.6-7 8.9-4.1-1.3-7-4.6-7-8.9V10z" fill="#fff" />
+            <path
+              d="m12.6 15.9 2.4 2.4 4.4-4.6"
+              fill="none"
+              stroke="#0052FF"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span>
+            Coinbase <span className="brand-product">Cover</span>
+          </span>
         </NavLink>
         <nav className="nav">
           <NavLink to="/" end>
@@ -23,24 +41,41 @@ export function Layout() {
         {isConnected ? (
           <span className="wallet-area">
             <span className="muted small">
-              {usd(pool.usdcBalance)} USDC · {pool.ethBalance.toFixed(4)} ETH
+              {usd(pool.usdcBalance)} USDC
             </span>
-            <button type="button" className="link-button small" onClick={() => void pool.requestTestFunds()} disabled={!!busy}>
+            <button
+              type="button"
+              className="button button-ghost button-small"
+              onClick={() => void pool.requestTestFunds()}
+              disabled={!!busy}
+            >
               Get test funds
             </button>
             <span className="wallet" title={you}>
+              <span className="wallet-dot" aria-hidden="true" />
               {shortAddr(you)}
             </span>
-            <button type="button" className="link-button small" onClick={pool.disconnect}>
-              Disconnect
+            <button
+              type="button"
+              className="button button-ghost button-small"
+              onClick={pool.disconnect}
+              title={demoMode.demo ? 'Exit demo' : 'Disconnect'}
+            >
+              {demoMode.demo ? 'Exit demo' : 'Disconnect'}
             </button>
           </span>
         ) : (
-          <button type="button" className="button" onClick={() => void pool.connect()}>
-            Connect wallet
-          </button>
+          <span className="wallet-area">
+            <button type="button" className="button button-ghost" onClick={demoMode.enter}>
+              Try demo
+            </button>
+            <button type="button" className="button" onClick={() => void pool.connect()}>
+              Connect wallet
+            </button>
+          </span>
         )}
       </header>
+      <DemoBanner />
 
       {wrongNetwork && (
         <p className="banner banner-warn">
@@ -50,19 +85,7 @@ export function Layout() {
           </button>
         </p>
       )}
-      {busy && (
-        <p className="banner" role="status">
-          {busy}
-          {lastTx && (
-            <>
-              {' '}
-              <a href={`${EXPLORER}/tx/${lastTx}`} target="_blank" rel="noreferrer">
-                View transaction
-              </a>
-            </>
-          )}
-        </p>
-      )}
+      <TxToast />
       {error && (
         <p className="banner banner-error" role="alert">
           {error}{' '}
@@ -72,9 +95,7 @@ export function Layout() {
         </p>
       )}
 
-      <main>
-        {pool.loading ? <p className="muted">Loading the pool from Base Sepolia…</p> : <Outlet />}
-      </main>
+      <main>{pool.loading ? <p className="muted">Loading the pool from Base Sepolia…</p> : <Outlet />}</main>
 
       <footer className="site-footer">
         <span>

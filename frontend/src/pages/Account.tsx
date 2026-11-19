@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
+import { StrategyChips } from '../components/ClaimBits';
 import { RULES } from '../lib/rules';
 import { pct, STATUS_LABEL, timeLeft, usd } from '../lib/format';
 
@@ -51,8 +52,10 @@ export function Account() {
       <p className="mono">{me.agent}</p>
 
       <h2>Strategy</h2>
-      <blockquote>{me.strategyText}</blockquote>
-      <p className="muted">To change your strategy, leave the pool and join again. Coverage restarts after the waiting period.</p>
+      <StrategyChips text={me.strategyText} />
+      <p className="muted">
+        To change your strategy, leave the pool and join again. Coverage restarts after the waiting period.
+      </p>
 
       <h2>My claims</h2>
       {myClaims.length === 0 ? (

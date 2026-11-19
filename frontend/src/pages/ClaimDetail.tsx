@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { Address, Hash, PublicClient } from 'viem';
-import { usePublicClient } from 'wagmi';
 import { RoundTripReview } from '../components/RoundTripReview';
-import { CHAIN } from '../lib/chain';
-import { readRoundTrip, type RoundTrip } from '../lib/roundTrip';
+import type { RoundTrip } from '../lib/roundTrip';
 import { usePool } from '../state/PoolContext';
-import { StatusBadge, TallyBar } from '../components/ClaimBits';
+import { StatusBadge, StrategyChips, TallyBar } from '../components/ClaimBits';
 import { lossFromLines, outcomeFor, payoutFor, RULES, type VoteChoice } from '../lib/rules';
 import { date, pct, price, shortAddr, STATUS_LABEL, strategyHash, timeLeft, usd, VOTE_LABEL } from '../lib/format';
 import type { Claim } from '../lib/types';
@@ -68,7 +65,11 @@ function ClaimDetailBody({ id }: { id: number }) {
           <p>{claim.summary}</p>
 
           <h3>Committed strategy</h3>
-          <blockquote>{claim.revealedStrategy}</blockquote>
+          <StrategyChips text={claim.revealedStrategy} broken={claim.brokenRules} />
+          <details className="exact-text">
+            <summary>Exact text</summary>
+            <blockquote>{claim.revealedStrategy}</blockquote>
+          </details>
           <p className={hashMatches ? 'ok' : 'warn'}>
             {hashMatches
               ? 'This text matches the strategy fingerprint committed on-chain.'
@@ -126,9 +127,7 @@ function ClaimDetailBody({ id }: { id: number }) {
 
           <h2>Votes</h2>
           <TallyBar claim={claim} showLegend />
-          {claim.status === 'open' && (
-            <p className="muted">If voting ended now: {STATUS_LABEL[outcomeFor(claim)]}.</p>
-          )}
+          {claim.status === 'open' && <p className="muted">If voting ended now: {STATUS_LABEL[outcomeFor(claim)]}.</p>}
 
           {votingOpen && (
             <VotePanel
@@ -164,16 +163,16 @@ function ClaimDetailBody({ id }: { id: number }) {
 }
 
 function PairEvidence({ claim, coveredFrom }: { claim: Claim; coveredFrom: number }) {
-  const client = usePublicClient({ chainId: CHAIN.id }) as PublicClient | undefined;
+  const { readRoundTrip } = usePool();
   const [result, setResult] = useState<{ pair?: RoundTrip; error?: string } | null>(null);
   useEffect(() => {
-    if (!client || !claim.sellTxHash) return;
+    if (!claim.sellTxHash) return;
     let cancelled = false;
-    void readRoundTrip(client, claim.txHash as Hash, claim.sellTxHash as Hash, claim.agent as Address, coveredFrom)
+    void readRoundTrip(claim.txHash, claim.sellTxHash, claim.agent, coveredFrom)
       .then((pair) => { if (!cancelled) setResult({ pair }); })
       .catch((e: unknown) => { if (!cancelled) setResult({ error: e instanceof Error ? e.message : String(e) }); });
     return () => { cancelled = true; };
-  }, [client, claim.txHash, claim.sellTxHash, claim.agent, coveredFrom]);
+  }, [readRoundTrip, claim.txHash, claim.sellTxHash, claim.agent, coveredFrom]);
   const pair = result?.pair;
   return (
     <>
@@ -283,7 +282,9 @@ function VotePanel({
 
 function VoteResult({ claim, vote }: { claim: Claim; vote: VoteChoice }) {
   if (claim.status === 'noQuorum') {
-    return <p className="muted">You voted {VOTE_LABEL[vote]}. Not enough members voted, so nobody gained or lost stake.</p>;
+    return (
+      <p className="muted">You voted {VOTE_LABEL[vote]}. Not enough members voted, so nobody gained or lost stake.</p>
+    );
   }
   const won = (vote === 'approve') === (claim.status === 'approved');
   return (

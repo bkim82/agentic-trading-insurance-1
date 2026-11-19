@@ -4,9 +4,10 @@ import { getPublicClient, waitForTransactionReceipt, writeContract } from 'wagmi
 import { decodeEventLog, formatUnits, getAddress, parseUnits, type Address, type Hash, type PublicClient, type TransactionReceipt } from 'viem';
 import { agentInsurancePoolAbi, erc20Abi } from '../lib/abi';
 import { CHAIN, POOL_ADDRESS, USDC_ADDRESS, USDC_DECIMALS } from '../lib/chain';
-import { shortAddr, strategyHash } from '../lib/format';
+import { shortAddr, strategyHash, VOTE_LABEL } from '../lib/format';
 import type { ClaimStatus, LossLine, VoteChoice } from '../lib/rules';
-import type { Claim, Member } from '../lib/types';
+import type { ActivityItem, Claim, Member } from '../lib/types';
+import { readRoundTrip, type RoundTrip } from '../lib/roundTrip';
 
 // Reads pool state from the deployed AgentInsurancePool on Base Sepolia and sends
 // transactions through the connected browser wallet.
@@ -21,8 +22,9 @@ export interface PoolParams {
   minStake: number;
 }
 
-interface Snapshot {
+export interface Snapshot {
   members: Member[];
+  activity: ActivityItem[];
   claims: Claim[];
   poolAssets: number;
   openClaimCount: number;
@@ -36,7 +38,18 @@ interface JoinInfo {
   strategyURI: string;
 }
 
-interface PoolApi extends Snapshot {
+export type TxKind = 'faucet' | 'approve' | 'join' | 'leave' | 'claim' | 'vote' | 'resolve';
+
+export interface TxState {
+  kind: TxKind;
+  /** wallet: waiting for the user to sign; pending: sent, waiting for a block; confirmed: done. */
+  stage: 'wallet' | 'pending' | 'confirmed';
+  label: string;
+  doneLabel: string;
+  hash: Hash | null;
+}
+
+export interface PoolApi extends Snapshot {
   you: string;
   me: Member | undefined;
   now: number;
@@ -44,6 +57,9 @@ interface PoolApi extends Snapshot {
   error: string | null;
   busy: string | null;
   lastTx: Hash | null;
+  /** The transaction in flight or just confirmed; drives the transaction toast and join progress. */
+  tx: TxState | null;
+  dismissTx: () => void;
   isConnected: boolean;
   wrongNetwork: boolean;
   memberOf: (address: string) => Member | undefined;
@@ -54,15 +70,24 @@ interface PoolApi extends Snapshot {
   requestTestFunds: () => Promise<void>;
   join: (agent: string, strategyText: string, amount: number) => Promise<boolean>;
   leave: () => Promise<boolean>;
-  fileClaim: (input: { buyHash: string; sellHash: string; summary: string; requested: number }) => Promise<number | null>;
+  fileClaim: (input: {
+    buyHash: string;
+    sellHash: string;
+    summary: string;
+    requested: number;
+    brokenRules: string[];
+  }) => Promise<number | null>;
   vote: (claimId: number, choice: VoteChoice) => Promise<boolean>;
   resolve: (claimId: number) => Promise<boolean>;
+  /** Reads and checks a buy + sell pair sent by `agent` (see lib/roundTrip). Demo mode returns a simulated pair. */
+  readRoundTrip: (buyHash: string, sellHash: string, agent: string, coveredFrom: number) => Promise<RoundTrip>;
 }
 
-const PoolContext = createContext<PoolApi | null>(null);
+export const PoolContext = createContext<PoolApi | null>(null);
 
 const EMPTY: Snapshot = {
   members: [],
+  activity: [],
   claims: [],
   poolAssets: 0,
   openClaimCount: 0,
@@ -91,16 +116,29 @@ function toLossLine(raw: unknown): LossLine[] {
 }
 
 /** Legacy claims can contain claimant-supplied loss lines; new claims store only a sell hash. */
-function parseEvidence(evidenceURI: string): { summary: string; lossLines: LossLine[]; sellTxHash?: Hash } {
+function parseEvidence(evidenceURI: string): {
+  summary: string;
+  lossLines: LossLine[];
+  sellTxHash?: Hash;
+  brokenRules: string[];
+} {
   try {
-    const parsed = JSON.parse(evidenceURI) as { summary?: unknown; lossLines?: unknown; sellTxHash?: unknown };
+    const parsed = JSON.parse(evidenceURI) as {
+      summary?: unknown;
+      lossLines?: unknown;
+      sellTxHash?: unknown;
+      brokenRules?: unknown;
+    };
     return {
       summary: typeof parsed.summary === 'string' ? parsed.summary : '',
       lossLines: Array.isArray(parsed.lossLines) ? parsed.lossLines.flatMap(toLossLine) : [],
       sellTxHash: typeof parsed.sellTxHash === 'string' ? parsed.sellTxHash as Hash : undefined,
+      brokenRules: Array.isArray(parsed.brokenRules)
+        ? parsed.brokenRules.filter((r): r is string => typeof r === 'string')
+        : [],
     };
   } catch {
-    return { summary: evidenceURI, lossLines: [] };
+    return { summary: evidenceURI, lossLines: [], brokenRules: [] };
   }
 }
 
@@ -115,6 +153,68 @@ async function fetchJoins(): Promise<Map<Address, JoinInfo>> {
   const joins = new Map<Address, JoinInfo>();
   for (const j of body.joins) joins.set(getAddress(j.member), { agent: getAddress(j.agent), strategyURI: j.strategyURI });
   return joins;
+}
+
+interface RawEvent {
+  event: string;
+  at: number;
+  tx: string;
+  logIndex: number;
+  params: Record<string, string>;
+}
+
+/** Recent pool events for the activity feed. Optional: the feed is just empty if this fails. */
+async function fetchActivity(sharesToUsd: (shares: bigint) => number): Promise<ActivityItem[]> {
+  try {
+    const res = await fetch('/api/activity');
+    if (!res.ok) return [];
+    const { events = [] } = (await res.json()) as { events?: RawEvent[] };
+    return events.flatMap((e): ActivityItem[] => {
+      const base = { id: `${e.tx}-${e.logIndex}-${e.event}`, at: e.at, tx: e.tx };
+      const p = e.params;
+      switch (e.event) {
+        case 'Joined':
+          return [{ ...base, kind: 'joined', actor: getAddress(p.member), amount: toUsd(BigInt(p.amount)) }];
+        case 'Left':
+          return [{ ...base, kind: 'left', actor: getAddress(p.member), amount: toUsd(BigInt(p.amount)) }];
+        case 'ClaimFiled':
+          return [
+            {
+              ...base,
+              kind: 'filed',
+              actor: getAddress(p.claimant),
+              claimId: Number(p.claimId),
+              amount: toUsd(BigInt(p.requestedAmount)),
+            },
+          ];
+        case 'Voted':
+          return [
+            {
+              ...base,
+              kind: 'voted',
+              actor: getAddress(p.voter),
+              claimId: Number(p.claimId),
+              vote: VOTE_FROM_INDEX[Number(p.vote)] ?? undefined,
+              amount: sharesToUsd(BigInt(p.weight)),
+            },
+          ];
+        case 'ClaimResolved':
+          return [
+            {
+              ...base,
+              kind: 'resolved',
+              claimId: Number(p.claimId),
+              status: STATUS_FROM_INDEX[Number(p.status)],
+              amount: toUsd(BigInt(p.payout)),
+            },
+          ];
+        default:
+          return [];
+      }
+    });
+  } catch {
+    return [];
+  }
 }
 
 async function fetchSnapshot(client: PublicClient, you: Address | undefined): Promise<Snapshot> {
@@ -220,6 +320,7 @@ async function fetchSnapshot(client: PublicClient, you: Address | undefined): Pr
         requested: toUsd(c.requestedAmount),
         summary: evidence.summary,
         lossLines: evidence.lossLines,
+        brokenRules: evidence.brokenRules,
         createdAt: Number(c.createdAt) * 1000,
         votingEnds: Number(c.votingEnds) * 1000,
         status: STATUS_FROM_INDEX[c.status] ?? 'open',
@@ -244,8 +345,11 @@ async function fetchSnapshot(client: PublicClient, you: Address | undefined): Pr
     ethBalance = Number(formatUnits(eth, 18));
   }
 
+  const activity = await fetchActivity(sharesToUsd);
+
   return {
     members,
+    activity,
     claims,
     poolAssets: toUsd(totalAssets),
     openClaimCount: Number(openClaimCount),
@@ -271,6 +375,7 @@ export function PoolProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [lastTx, setLastTx] = useState<Hash | null>(null);
+  const [tx, setTx] = useState<TxState | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   const you = address ?? '';
@@ -304,18 +409,27 @@ export function PoolProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const runTx = useCallback(
-    async (label: string, send: () => Promise<Hash>): Promise<TransactionReceipt | null> => {
+    async (
+      kind: TxKind,
+      label: string,
+      doneLabel: string,
+      send: () => Promise<Hash>,
+    ): Promise<TransactionReceipt | null> => {
       setError(null);
       try {
         if (wrongNetwork) await switchChainAsync({ chainId: CHAIN.id });
         setBusy(label);
+        setTx({ kind, stage: 'wallet', label, doneLabel, hash: null });
         const hash = await send();
         setLastTx(hash);
+        setTx({ kind, stage: 'pending', label, doneLabel, hash });
         const receipt = await waitForTransactionReceipt(config, { hash, chainId: CHAIN.id });
         if (receipt.status !== 'success') throw new Error('The transaction failed on-chain.');
         await refresh();
+        setTx({ kind, stage: 'confirmed', label, doneLabel, hash });
         return receipt;
       } catch (e) {
+        setTx(null);
         setError(errorMessage(e));
         return null;
       } finally {
@@ -350,7 +464,10 @@ export function PoolProvider({ children }: { children: ReactNode }) {
   const requestTestFunds = useCallback(async () => {
     if (!address) return;
     setError(null);
-    setBusy('Requesting test USDC and ETH from the CDP faucet…');
+    const label = 'Requesting test USDC and ETH from the CDP faucet';
+    const doneLabel = 'Test USDC and ETH received';
+    setBusy(label);
+    setTx({ kind: 'faucet', stage: 'pending', label, doneLabel, hash: null });
     try {
       const res = await fetch('/api/faucet', {
         method: 'POST',
@@ -360,9 +477,12 @@ export function PoolProvider({ children }: { children: ReactNode }) {
       const body = (await res.json()) as { usdcTx?: Hash; error?: string };
       if (!res.ok || !body.usdcTx) throw new Error(body.error ?? 'Faucet request failed');
       setLastTx(body.usdcTx);
+      setTx({ kind: 'faucet', stage: 'pending', label, doneLabel, hash: body.usdcTx });
       await client.waitForTransactionReceipt({ hash: body.usdcTx });
       await refresh();
+      setTx({ kind: 'faucet', stage: 'confirmed', label, doneLabel, hash: body.usdcTx });
     } catch (e) {
+      setTx(null);
       setError(errorMessage(e));
     } finally {
       setBusy(null);
@@ -380,12 +500,12 @@ export function PoolProvider({ children }: { children: ReactNode }) {
         args: [address, POOL_ADDRESS],
       });
       if (allowance < units) {
-        const approved = await runTx('Approve the USDC transfer in your wallet…', () =>
+        const approved = await runTx('approve', 'Approve the USDC transfer', 'USDC approved', () =>
           writeContract(config, { chainId: CHAIN.id, address: USDC_ADDRESS, abi: erc20Abi, functionName: 'approve', args: [POOL_ADDRESS, units] }),
         );
         if (!approved) return false;
       }
-      const joined = await runTx('Joining the pool…', () =>
+      const joined = await runTx('join', 'Joining the pool', 'You joined the pool', () =>
         writeContract(config, {
           ...pool,
           chainId: CHAIN.id,
@@ -399,15 +519,15 @@ export function PoolProvider({ children }: { children: ReactNode }) {
   );
 
   const leave = useCallback(async () => {
-    const r = await runTx('Leaving the pool…', () => writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'leave' }));
+    const r = await runTx('leave', 'Leaving the pool', 'You left the pool', () => writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'leave' }));
     return r !== null;
   }, [config, runTx]);
 
   const fileClaim = useCallback<PoolApi['fileClaim']>(
-    async ({ buyHash, sellHash, summary, requested }) => {
-      const evidence = JSON.stringify({ summary, sellTxHash: sellHash });
+    async ({ buyHash, sellHash, summary, requested, brokenRules }) => {
+      const evidence = JSON.stringify({ summary, sellTxHash: sellHash, brokenRules });
       const units = parseUnits(requested.toFixed(USDC_DECIMALS), USDC_DECIMALS);
-      const receipt = await runTx('Filing your claim…', () =>
+      const receipt = await runTx('claim', 'Filing your claim', 'Claim filed', () =>
         writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'fileClaim', args: [buyHash as Hash, units, evidence] }),
       );
       if (!receipt) return null;
@@ -427,7 +547,7 @@ export function PoolProvider({ children }: { children: ReactNode }) {
 
   const vote = useCallback(
     async (claimId: number, choice: VoteChoice) => {
-      const r = await runTx('Submitting your vote…', () =>
+      const r = await runTx('vote', 'Submitting your vote', `Vote confirmed: ${VOTE_LABEL[choice]} on claim #${claimId}`, () =>
         writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'vote', args: [BigInt(claimId), VOTE_TO_INDEX[choice]] }),
       );
       return r !== null;
@@ -437,13 +557,21 @@ export function PoolProvider({ children }: { children: ReactNode }) {
 
   const resolve = useCallback(
     async (claimId: number) => {
-      const r = await runTx('Resolving the claim…', () =>
+      const r = await runTx('resolve', 'Resolving the claim', `Claim #${claimId} resolved`, () =>
         writeContract(config, { ...pool, chainId: CHAIN.id, functionName: 'resolve', args: [BigInt(claimId)] }),
       );
       return r !== null;
     },
     [config, runTx],
   );
+
+  const readRoundTripApi = useCallback<PoolApi['readRoundTrip']>(
+    (buyHash, sellHash, agent, coveredFrom) =>
+      readRoundTrip(client, buyHash as Hash, sellHash as Hash, agent as Address, coveredFrom),
+    [client],
+  );
+
+  const dismissTx = useCallback(() => setTx((t) => (t?.stage === 'confirmed' ? null : t)), []);
 
   const memberOf = useCallback((addr: string) => snap.members.find((m) => m.address === addr), [snap.members]);
   const me = snap.members.find((m) => m.address === you && m.active);
@@ -458,6 +586,9 @@ export function PoolProvider({ children }: { children: ReactNode }) {
       error,
       busy,
       lastTx,
+      tx,
+      dismissTx,
+      readRoundTrip: readRoundTripApi,
       isConnected,
       wrongNetwork,
       memberOf,
@@ -472,7 +603,7 @@ export function PoolProvider({ children }: { children: ReactNode }) {
       vote,
       resolve,
     }),
-    [snap, you, me, now, loading, error, busy, lastTx, isConnected, wrongNetwork, memberOf, connect, disconnect, switchNetwork, requestTestFunds, join, leave, fileClaim, vote, resolve],
+    [snap, you, me, now, loading, error, busy, lastTx, tx, dismissTx, readRoundTripApi, isConnected, wrongNetwork, memberOf, connect, disconnect, switchNetwork, requestTestFunds, join, leave, fileClaim, vote, resolve],
   );
 
   return <PoolContext.Provider value={api}>{children}</PoolContext.Provider>;
