@@ -1,4 +1,4 @@
-import { useRef, useState, type Ref } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ClaimStatus, VoteChoice } from '../lib/rules';
 import { lossFromLines, payoutFor, RULES, turnoutPct } from '../lib/rules';
@@ -72,26 +72,18 @@ export function TallyBar({ claim, showLegend = false }: { claim: Claim; showLege
 
 const VOTES: VoteChoice[] = ['approve', 'reject', 'fraud'];
 
-/** Pill toggle for approve / reject / fraud, like a Buy / Sell switch. */
-export function VoteToggle({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: VoteChoice | null;
-  onChange: (v: VoteChoice) => void;
-  disabled?: boolean;
-}) {
+/** Approve / Reject / Fraud buttons. Each one sends the vote; the wallet prompt is the confirmation. */
+function VoteButtons({ claimId }: { claimId: number }) {
+  const pool = usePool();
   return (
-    <div className="segmented" role="group" aria-label="Your vote">
+    <div className="vote-buttons" role="group" aria-label="Vote">
       {VOTES.map((v) => (
         <button
           key={v}
           type="button"
-          className={value === v ? `seg seg-on seg-${v}` : 'seg'}
-          aria-pressed={value === v}
-          disabled={disabled}
-          onClick={() => onChange(v)}
+          className={`vote-btn vote-btn-${v}`}
+          disabled={!!pool.busy}
+          onClick={() => void pool.vote(claimId, v)}
         >
           {VOTE_LABEL[v]}
         </button>
@@ -100,45 +92,61 @@ export function VoteToggle({
   );
 }
 
-/** One open claim as a card: what it pays, where the vote stands, and the vote itself. */
+/** One open claim as a card: summary, vote buttons, and expandable evidence. */
 export function ClaimCard({ claim }: { claim: Claim }) {
   const pool = usePool();
-  const [choice, setChoice] = useState<VoteChoice | null>(null);
-  const sheet = useRef<HTMLDialogElement>(null);
+  const [expanded, setExpanded] = useState(false);
   const claimant = pool.memberOf(claim.claimant);
   const payout = payoutFor(claim.requested, claimant?.stake ?? 0, pool.poolAssets).payout;
   const eligibility = voteEligibility(claim, pool.me, pool.you, pool.now);
   const href = `/claims/${claim.id}`;
+  const detailsId = `claim-details-${claim.id}`;
 
   return (
-    <article className="card claim-card">
+    <article className={expanded ? 'card claim-card expanded' : 'card claim-card'}>
       <header className="claim-card-head">
         <Link to={href} className="claim-card-title">
           Claim #{claim.id}
         </Link>
         <span className="muted small">{timeLeft(claim.votingEnds, pool.now)}</span>
       </header>
-      <p className="claim-card-summary">{claim.summary || 'No summary provided.'}</p>
+      <p className={expanded ? 'claim-card-summary full' : 'claim-card-summary'}>
+        {claim.summary || 'No summary provided.'}
+      </p>
       <p className="muted small claim-card-meta">
         {claimant?.label ?? shortAddr(claim.claimant)} · pays <strong>{usd(payout)}</strong> if approved
       </p>
 
       <TallyBar claim={claim} />
 
-      {eligibility.kind === 'can' && (
-        <>
-          <VoteToggle value={choice} onChange={setChoice} disabled={!!pool.busy} />
-          <button
-            type="button"
-            className="button button-block"
-            disabled={!choice || !!pool.busy}
-            onClick={() => sheet.current?.showModal()}
-          >
-            {choice ? `Review & confirm ${VOTE_LABEL[choice].toLowerCase()}` : 'Pick a vote'}
-          </button>
-          {choice && <EvidenceSheet ref={sheet} claim={claim} choice={choice} payout={payout} />}
-        </>
+      {!expanded && eligibility.kind === 'can' && <VoteButtons claimId={claim.id} />}
+
+      <button
+        type="button"
+        className="expand-toggle"
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        onClick={() => setExpanded((x) => !x)}
+      >
+        {expanded ? 'Hide details' : 'Show details'}
+        <span className="chevron" aria-hidden="true" />
+      </button>
+
+      {expanded && (
+        <div id={detailsId} className="claim-details">
+          <ClaimEvidence claim={claim} payout={payout} />
+          {eligibility.kind === 'can' && (
+            <>
+              <p className="muted small">
+                Voting with {usd(pool.me?.stake ?? 0)} of stake. The losing side loses {pct(RULES.voterPenaltyPct)} of
+                stake.
+              </p>
+              <VoteButtons claimId={claim.id} />
+            </>
+          )}
+        </div>
       )}
+
       {eligibility.kind === 'ended' && (
         <button
           type="button"
@@ -152,104 +160,59 @@ export function ClaimCard({ claim }: { claim: Claim }) {
       {eligibility.kind === 'voted' && (
         <p className="claim-card-foot">
           You voted <strong className={`vote-${eligibility.vote}`}>{VOTE_LABEL[eligibility.vote]}</strong> ·{' '}
-          <Link to={href}>Details</Link>
+          <Link to={href}>Full claim</Link>
         </p>
       )}
       {eligibility.kind === 'blocked' && (
         <p className="claim-card-foot muted">
-          {eligibility.reason} · <Link to={href}>Details</Link>
+          {eligibility.reason} · <Link to={href}>Full claim</Link>
         </p>
       )}
     </article>
   );
 }
 
-/** Modal with the evidence a voter should check before the wallet prompt. */
-function EvidenceSheet({
-  ref,
-  claim,
-  choice,
-  payout,
-}: {
-  ref: Ref<HTMLDialogElement>;
-  claim: Claim;
-  choice: VoteChoice;
-  payout: number;
-}) {
-  const pool = usePool();
+/** What a voter should check: strategy and its fingerprint, the transaction, and the loss math. */
+function ClaimEvidence({ claim, payout }: { claim: Claim; payout: number }) {
   const hashMatches = strategyHash(claim.revealedStrategy) === claim.strategyHash;
   const loss = lossFromLines(claim.lossLines);
-  const stake = pool.me?.stake ?? 0;
 
   return (
-    <dialog ref={ref} className="sheet" aria-labelledby={`sheet-title-${claim.id}`}>
-      <form method="dialog" className="sheet-body">
-        <header className="sheet-head">
-          <h2 id={`sheet-title-${claim.id}`}>Claim #{claim.id}</h2>
-          <button type="submit" value="cancel" className="icon-button" aria-label="Close">
-            ×
-          </button>
-        </header>
+    <>
+      <h3>Committed strategy</h3>
+      <blockquote>{claim.revealedStrategy || 'Not provided.'}</blockquote>
+      <p className={hashMatches ? 'pos small' : 'neg small'}>
+        {hashMatches ? '✓ Matches the on-chain fingerprint' : '✕ Does not match the on-chain fingerprint'}
+      </p>
 
-        <p>{claim.summary || 'No summary provided.'}</p>
-
-        <h3>Committed strategy</h3>
-        <blockquote>{claim.revealedStrategy || 'Not provided.'}</blockquote>
-        <p className={hashMatches ? 'pos small' : 'neg small'}>
-          {hashMatches ? '✓ Matches the on-chain fingerprint' : '✕ Does not match the on-chain fingerprint'}
-        </p>
-
-        <dl className="kv">
-          <dt>Transaction</dt>
-          <dd>
-            <a href={`${EXPLORER}/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
-              {shortAddr(claim.txHash)}
-            </a>
-          </dd>
-          {claim.lossLines.map((l, i) => (
-            <FragmentRow
-              key={i}
-              label={`${l.direction === 'out' ? 'Left wallet' : 'Came back'} · ${l.amount.toLocaleString()} ${l.token} @ ${price(l.priceUsd)}`}
-              value={`${l.direction === 'out' ? '' : '−'}${usd(l.amount * l.priceUsd)}`}
-            />
-          ))}
-          <dt>
-            <strong>Loss</strong>
-          </dt>
-          <dd>
-            <strong>{usd(loss)}</strong>
-          </dd>
-          <dt>Pays if approved</dt>
-          <dd>{usd(payout)}</dd>
-        </dl>
-
-        <p className="muted small">
-          Voting {VOTE_LABEL[choice]} with {usd(stake)} of stake. If you end up on the losing side you lose{' '}
-          {usd(stake * RULES.voterPenaltyPct)} ({pct(RULES.voterPenaltyPct)}).
-        </p>
-
-        <div className="sheet-actions">
-          <button type="submit" value="cancel" className="button button-ghost">
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={!!pool.busy}
-            onClick={async (e) => {
-              const dialog = e.currentTarget.closest('dialog');
-              if (await pool.vote(claim.id, choice)) dialog?.close();
-            }}
-          >
-            Confirm {VOTE_LABEL[choice].toLowerCase()}
-          </button>
-        </div>
-      </form>
-    </dialog>
+      <dl className="kv">
+        <dt>Transaction</dt>
+        <dd>
+          <a href={`${EXPLORER}/tx/${claim.txHash}`} target="_blank" rel="noreferrer">
+            {shortAddr(claim.txHash)}
+          </a>
+        </dd>
+        {claim.lossLines.map((l, i) => (
+          <KvRow
+            key={i}
+            label={`${l.direction === 'out' ? 'Left wallet' : 'Came back'} · ${l.amount.toLocaleString()} ${l.token} @ ${price(l.priceUsd)}`}
+            value={`${l.direction === 'out' ? '' : '−'}${usd(l.amount * l.priceUsd)}`}
+          />
+        ))}
+        <dt>
+          <strong>Loss</strong>
+        </dt>
+        <dd>
+          <strong>{usd(loss)}</strong>
+        </dd>
+        <dt>Pays if approved</dt>
+        <dd>{usd(payout)}</dd>
+      </dl>
+    </>
   );
 }
 
-function FragmentRow({ label, value }: { label: string; value: string }) {
+function KvRow({ label, value }: { label: string; value: string }) {
   return (
     <>
       <dt>{label}</dt>
