@@ -2,10 +2,11 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { usePool } from '../state/PoolContext';
 import { EXPLORER, POOL_ADDRESS } from '../lib/chain';
 import { shortAddr, usd } from '../lib/format';
+import { TxToast } from './TxToast';
 
 export function Layout() {
   const pool = usePool();
-  const { you, me, isConnected, wrongNetwork, busy, error, lastTx } = pool;
+  const { you, me, isConnected, wrongNetwork, busy, error } = pool;
 
   return (
     <div className="page">
@@ -75,19 +76,7 @@ export function Layout() {
           </button>
         </p>
       )}
-      {busy && (
-        <p className="banner" role="status">
-          {busy}
-          {lastTx && (
-            <>
-              {' '}
-              <a href={`${EXPLORER}/tx/${lastTx}`} target="_blank" rel="noreferrer">
-                View transaction
-              </a>
-            </>
-          )}
-        </p>
-      )}
+      <TxToast />
       {error && (
         <p className="banner banner-error" role="alert">
           {error}{' '}

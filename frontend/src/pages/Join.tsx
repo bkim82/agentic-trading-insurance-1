@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { isAddress } from 'viem';
 import { usePool } from '../state/PoolContext';
 import { date, duration, strategyHash, usd } from '../lib/format';
+import { JoinProgress } from '../components/JoinProgress';
+import { StrategyChips } from '../components/ClaimBits';
 
 export function Join() {
   const pool = usePool();
-  const navigate = useNavigate();
   const [agent, setAgent] = useState('');
   const [strategy, setStrategy] = useState('');
   const [amount, setAmount] = useState('');
@@ -14,9 +15,10 @@ export function Join() {
   if (pool.me) {
     return (
       <>
-        <h1>You're already a member</h1>
+        <h1>{pool.now >= pool.me.coveredFrom ? "You're covered" : "You're in"}</h1>
+        <JoinProgress stake={pool.me.stake} />
         <p>
-          See <Link to="/account">your account</Link>.
+          See <Link to="/account">your account</Link> or <Link to="/claims">vote on claims</Link>.
         </p>
       </>
     );
@@ -37,7 +39,8 @@ export function Join() {
   const { minStake, waitingPeriodMs } = pool.params;
   const stake = Number(amount || 0);
   const agentTaken = pool.members.some((m) => m.active && m.agent.toLowerCase() === agent.toLowerCase());
-  const agentError = agent && !isAddress(agent) ? 'Not a valid address.' : agentTaken ? 'This agent is already registered.' : null;
+  const agentError =
+    agent && !isAddress(agent) ? 'Not a valid address.' : agentTaken ? 'This agent is already registered.' : null;
   const stakeError =
     amount && stake < minStake
       ? `Minimum stake is ${usd(minStake)}.`
@@ -51,15 +54,17 @@ export function Join() {
     <>
       <h1>Join the pool</h1>
       <p className="lede">
-        Register your trading agent and commit to the strategy it must follow. If it breaks that strategy and loses money,
-        you can file a claim.
+        Register your trading agent and commit to the strategy it must follow. If it breaks that strategy and loses
+        money, you can file a claim.
       </p>
+
+      <JoinProgress stake={stake} />
 
       <form
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          void pool.join(agent, strategy.trim(), stake).then((ok) => ok && navigate('/account'));
+          void pool.join(agent, strategy.trim(), stake);
         }}
       >
         <label>
@@ -78,11 +83,15 @@ export function Join() {
             onChange={(e) => setStrategy(e.target.value)}
           />
           <span className="hint">
-            Be specific: allowed tokens, venues, position sizes, slippage, leverage. Vague rules are hard to win claims on.
+            Be specific: allowed tokens, venues, position sizes, slippage, leverage. Vague rules are hard to win claims
+            on.
           </span>
         </label>
         {strategy.trim() && (
-          <p className="muted mono small">Fingerprint stored on-chain: {strategyHash(strategy.trim())}</p>
+          <>
+            <StrategyChips text={strategy} />
+            <p className="muted mono small">Fingerprint stored on-chain: {strategyHash(strategy.trim())}</p>
+          </>
         )}
 
         <label>
@@ -93,9 +102,9 @@ export function Join() {
         {stakeError && <p className="warn">{stakeError}</p>}
 
         <p className="muted">
-          Coverage starts around {date(coverageStarts)} ({duration(waitingPeriodMs)} from now). To change your
-          strategy later, you leave and rejoin, which restarts the wait. Joining takes two wallet confirmations: one to
-          allow the pool to take your USDC, and one to join.
+          Coverage starts around {date(coverageStarts)} ({duration(waitingPeriodMs)} from now). To change your strategy
+          later, you leave and rejoin, which restarts the wait. Joining takes two wallet confirmations: one to allow the
+          pool to take your USDC, and one to join.
         </p>
 
         <button type="submit" className="button" disabled={!canSubmit}>

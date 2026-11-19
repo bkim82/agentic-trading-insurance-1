@@ -28,6 +28,8 @@ export interface Claim {
   requested: number;
   summary: string;
   lossLines: LossLine[];
+  /** Rules from the committed strategy that the claimant says were broken (chips text). */
+  brokenRules: string[];
   createdAt: number;
   votingEnds: number;
   status: ClaimStatus;

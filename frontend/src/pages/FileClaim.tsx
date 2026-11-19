@@ -7,6 +7,7 @@ import { CHAIN } from '../lib/chain';
 import { date, duration, pct, timeLeft, usd } from '../lib/format';
 import { readRoundTrip, type RoundTrip } from '../lib/roundTrip';
 import { payoutFor, RULES } from '../lib/rules';
+import { strategyRules } from '../lib/strategy';
 import { usePool } from '../state/PoolContext';
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -18,6 +19,7 @@ export function FileClaim() {
   const [buyHash, setBuyHash] = useState('');
   const [sellHash, setSellHash] = useState('');
   const [summary, setSummary] = useState('');
+  const [brokenRules, setBrokenRules] = useState<string[]>([]);
   const [result, setResult] = useState<Lookup | null>(null);
   const client = usePublicClient({ chainId: CHAIN.id }) as PublicClient | undefined;
   const { me } = pool;
@@ -62,7 +64,7 @@ export function FileClaim() {
       <form className="stack wide" onSubmit={(e) => {
         e.preventDefault();
         if (!pair || !canSubmit) return;
-        void pool.fileClaim({ buyHash, sellHash, summary, requested }).then((id) => {
+        void pool.fileClaim({ buyHash, sellHash, summary, requested, brokenRules }).then((id) => {
           if (id !== null) navigate(`/claims/${id}`);
         });
       }}>
@@ -85,6 +87,23 @@ export function FileClaim() {
         {pair && <RoundTripReview pair={pair} buyHash={buyHash} sellHash={sellHash} />}
 
         <h2>3. Which strategy rule was broken?</h2>
+        <p className="muted">Pick the rules from your committed strategy. Voters see them highlighted on your claim.</p>
+        <div className="chips" role="group" aria-label="Rules broken">
+          {strategyRules(me.strategyText).map((r) => {
+            const on = brokenRules.includes(r);
+            return (
+              <button
+                key={r}
+                type="button"
+                className={on ? 'chip chip-toggle chip-broken' : 'chip chip-toggle'}
+                aria-pressed={on}
+                onClick={() => setBrokenRules((rs) => (on ? rs.filter((x) => x !== r) : [...rs, r]))}
+              >
+                {r}
+              </button>
+            );
+          })}
+        </div>
         <label>Explanation for voters
           <textarea rows={4} placeholder="Quote the rule and explain how these transactions broke it." value={summary} onChange={(e) => setSummary(e.target.value)} />
         </label>

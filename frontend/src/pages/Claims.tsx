@@ -3,9 +3,13 @@ import { usePool } from '../state/PoolContext';
 import { ClaimCard, StatusBadge } from '../components/ClaimBits';
 import { date, usd } from '../lib/format';
 
+/** Claims resolved in the last 30 minutes stay on screen as outcome cards. */
+const RECENT_MS = 30 * 60_000;
+
 export function Claims() {
-  const { claims, memberOf, me } = usePool();
-  const open = claims.filter((c) => c.status === 'open');
+  const { claims, memberOf, me, now } = usePool();
+  // Recently resolved claims stay in the grid (same key) so the card flips to its outcome.
+  const live = claims.filter((c) => c.status === 'open' || now - c.votingEnds < RECENT_MS);
   const closed = claims.filter((c) => c.status !== 'open');
 
   return (
@@ -19,12 +23,12 @@ export function Claims() {
         )}
       </div>
 
-      <h2>In voting</h2>
-      {open.length === 0 ? (
+      <h2>{live.some((c) => c.status === 'open') ? 'In voting' : 'Recently resolved'}</h2>
+      {live.length === 0 ? (
         <p className="card muted empty">No claims are in voting.</p>
       ) : (
         <div className="card-grid">
-          {open.map((c) => (
+          {live.map((c) => (
             <ClaimCard key={c.id} claim={c} />
           ))}
         </div>

@@ -5,13 +5,17 @@ import { payoutFor, RULES } from '../lib/rules';
 import { duration, pct, timeLeft, usd } from '../lib/format';
 import { voteEligibility } from '../lib/voting';
 
+/** Claims resolved in the last 30 minutes stay on screen as outcome cards. */
+const RECENT_MS = 30 * 60_000;
+
 export function Overview() {
   const { members, claims, poolAssets, me, you, now, params } = usePool();
   const active = members.filter((m) => m.active).length;
   const paid = claims.filter((c) => c.status === 'approved').reduce((s, c) => s + c.payout, 0);
   const open = claims.filter((c) => c.status === 'open');
   const needsVote = open.filter((c) => voteEligibility(c, me, you, now).kind === 'can');
-  const shown = needsVote.length > 0 ? needsVote : open;
+  const recent = claims.filter((c) => c.status !== 'open' && now - c.votingEnds < RECENT_MS);
+  const shown = [...(needsVote.length > 0 ? needsVote : open), ...recent];
   const covered = me ? now >= me.coveredFrom : false;
 
   return (
@@ -51,7 +55,7 @@ export function Overview() {
       </div>
 
       <div className="section-head">
-        <h2>{needsVote.length > 0 ? 'Needs your vote' : 'In voting'}</h2>
+        <h2>{needsVote.length > 0 ? 'Needs your vote' : open.length > 0 ? 'In voting' : 'Recently resolved'}</h2>
         <Link to="/claims">All claims</Link>
       </div>
       {shown.length > 0 ? (
