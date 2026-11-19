@@ -1645,3 +1645,92 @@ select {
     display: none;
   }
 }
+
+/* Join wizard: one question per step, then a review. */
+.wizard {
+  max-width: 560px;
+}
+.wiz-bar {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.wiz-bar li {
+  flex: 1;
+  height: 4px;
+  margin: 0;
+  border-radius: 99px;
+  background: var(--soft);
+  transition: background 0.3s;
+}
+.wiz-bar li.on,
+.wiz-bar li.done {
+  background: var(--accent);
+}
+.wiz-count {
+  margin: 0 0 4px;
+}
+.wiz-q {
+  margin: 0 0 4px;
+  font-size: 1.4rem;
+}
+.wiz-q:focus {
+  outline: none;
+}
+.wiz-step {
+  animation: wiz-in 0.25s ease-out;
+}
+@keyframes wiz-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+.wiz-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.chip-toggle.chip-on,
+.chip-toggle.chip-on:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.wiz-review {
+  margin: 0;
+  background: var(--card);
+  border-radius: var(--radius-card);
+  padding: 4px 18px;
+}
+.wiz-review > div {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--soft);
+}
+.wiz-review > div:last-child {
+  border-bottom: 0;
+}
+.wiz-review dt {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.wiz-review dd {
+  margin: 0;
+  min-width: 0;
+}
+.wiz-review .chips {
+  margin: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wiz-step {
+    animation: none;
+  }
+  .wiz-bar li {
+    transition: none;
+  }
+}
